@@ -1,6 +1,85 @@
-# Dependency and toolchain setup is milestone 1. This scaffold is not a
-# declaration that MIT krb5, libfido2, or Apple bundle targets build yet.
-module(
-    name = "kpasskey",
-    version = "0.0.0",
+module(name = "kpasskey", version = "0.1.0")
+
+# Register the Apple toolchain ahead of the generic rules_cc toolchain.
+bazel_dep(name = "apple_support", version = "2.8.1")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_apple", version = "4.5.3")
+bazel_dep(name = "rules_swift", version = "3.6.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "rules_foreign_cc", version = "0.0.0")
+
+# Upstream HEAD resolved 2026-09-05. Intentionally not the stale release.
+archive_override(
+    module_name = "rules_foreign_cc",
+    type = "tar.gz",
+    urls = ["https://codeload.github.com/bazel-contrib/rules_foreign_cc/tar.gz/f68b351c4691e747f889dc5e4c2cac3cd3b66ea2"],
+    strip_prefix = "rules_foreign_cc-f68b351c4691e747f889dc5e4c2cac3cd3b66ea2",
+    sha256 = "7f05eb9cc4b1c600c643e69221c88203244ccadc75ae28c4ade960f0f0742f26",
+)
+
+foreign_tools = use_extension("@rules_foreign_cc//foreign_cc:extensions.bzl", "tools")
+foreign_tools.explicit()
+foreign_tools.make(mode = "source", version = "4.4.1")
+foreign_tools.ninja(mode = "binary", version = "1.13.2")
+foreign_tools.pkgconfig(mode = "noop")
+foreign_tools.autoconf(mode = "noop")
+foreign_tools.automake(mode = "noop")
+foreign_tools.m4(mode = "noop")
+use_repo(foreign_tools, "rules_foreign_cc_toolchains")
+register_toolchains("//build:cmake_toolchain", "@rules_foreign_cc_toolchains//:all")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "krb5_src",
+    patches = ["//third_party:krb5-client-build.patch"],
+    patch_args = ["-p1"],
+    url = "https://web.mit.edu/kerberos/dist/krb5/1.22/krb5-1.22.2.tar.gz",
+    sha256 = "3243ffbc8ea4d4ac22ddc7dd2a1dc54c57874c40648b60ff97009763554eaf13",
+    strip_prefix = "krb5-1.22.2",
+    build_file = "//third_party:source.BUILD.bazel",
+)
+
+http_archive(
+    name = "libfido2_src",
+    url = "https://developers.yubico.com/libfido2/Releases/libfido2-1.17.0.tar.gz",
+    sha256 = "c1012c8871d71b65872fd5ff1a9d6b0838a55683a03e85ba97479ce57129c736",
+    strip_prefix = "libfido2-1.17.0",
+    build_file = "//third_party:source.BUILD.bazel",
+    patches = ["//third_party:libfido2-hermetic.patch"],
+    patch_args = ["-p1"],
+)
+
+http_archive(
+    name = "libcbor_src",
+    type = "tar.gz",
+    url = "https://codeload.github.com/PJK/libcbor/tar.gz/refs/tags/v0.14.0",
+    sha256 = "a8c1516e741562cf95aa4479c64916c3d4d2623e24fdc35e414e2320e7300aae",
+    strip_prefix = "libcbor-0.14.0",
+    build_file = "//third_party:source.BUILD.bazel",
+)
+
+http_archive(
+    name = "openssl_src",
+    url = "https://github.com/openssl/openssl/releases/download/openssl-3.6.4/openssl-3.6.4.tar.gz",
+    sha256 = "9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef",
+    strip_prefix = "openssl-3.6.4",
+    build_file = "//third_party:source.BUILD.bazel",
+)
+
+http_archive(
+    name = "zlib_src",
+    url = "https://zlib.net/zlib-1.3.2.tar.gz",
+    sha256 = "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+    strip_prefix = "zlib-1.3.2",
+    build_file = "//third_party:source.BUILD.bazel",
+)
+
+http_archive(
+    name = "cmake_src",
+    url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-macos-universal.tar.gz",
+    sha256 = "0c5d65251c14cc884bfa16bdbed3c263ce5bffe2e21c0d0d00962cb0610464fa",
+    strip_prefix = "cmake-4.4.3-macos-universal",
+    build_file = "//third_party:cmake.BUILD.bazel",
 )

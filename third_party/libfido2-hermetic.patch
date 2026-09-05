@@ -1,0 +1,20 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -222,10 +222,13 @@
+ 	endif()
+ 	set(NFC_LINUX OFF)
+ else()
+-	include(FindPkgConfig)
+-	pkg_search_module(CBOR libcbor)
+-	pkg_search_module(CRYPTO libcrypto)
+-	pkg_search_module(ZLIB zlib)
++	# KPasskey's macOS build supplies the complete dependency closure.
++	if(NOT APPLE OR NOT CBOR_LIBRARIES OR NOT CRYPTO_LIBRARIES OR NOT ZLIB_LIBRARIES)
++		message(FATAL_ERROR "KPasskey requires explicit macOS CBOR/crypto/zlib inputs")
++	endif()
++	set(CBOR_FOUND TRUE)
++	set(CRYPTO_FOUND TRUE)
++	set(ZLIB_FOUND TRUE)
+ 
+ 	if(NOT CBOR_FOUND AND NOT HAVE_CBOR_H)
+ 		message(FATAL_ERROR "could not find libcbor")

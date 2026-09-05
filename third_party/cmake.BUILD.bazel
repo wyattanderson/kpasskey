@@ -1,0 +1,7 @@
+exports_files(["CMake.app/Contents/bin/cmake"])
+
+filegroup(
+    name = "all",
+    srcs = glob(["CMake.app/**"]),
+    visibility = ["//visibility:public"],
+)

@@ -3,3 +3,14 @@ filegroup(
     srcs = glob(["*.md", "docs/*.md"]),
     visibility = ["//visibility:public"],
 )
+
+test_suite(
+    name = "milestone1",
+    tests = [
+        "//tests:bridge_probe",
+        "//tests:dependency_probe",
+        "//tests:linkage_audit",
+        "//tests:load_probe",
+        "//tests:relocation_probe",
+    ],
+)

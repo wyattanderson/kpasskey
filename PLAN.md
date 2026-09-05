@@ -1,6 +1,7 @@
 # KPasskey project plan
 
-Status: planning scaffold. All implementation milestones below are pending.
+Status: milestone 1 implemented and build-tested on arm64 macOS.
+Milestones 2 onward remain pending; no authentication is implemented.
 Decisions recorded: 2026-09-05.
 
 ## Objective and scope
@@ -43,39 +44,74 @@ The prototype compiles approximately 1,302 lines of SSSD C implementation
 
 Deliverables:
 
-- [ ] Select and pin a mutually compatible stable Bazel, Xcode/SDK, rules_cc,
+- [x] Select and pin a mutually compatible stable Bazel, Xcode/SDK, rules_cc,
   rules_apple, rules_swift, and rules_foreign_cc combination; add `.bazelversion`
   and commit the appropriate Bzlmod lockfile.
-- [ ] Set an explicit minimum macOS version and initial architecture. Start
+- [x] Set an explicit minimum macOS version and initial architecture. Start
   with arm64; decide and document whether x86_64 is a release requirement.
-- [ ] Fetch MIT krb5, libfido2, libcbor, and required crypto/build dependencies
+- [x] Fetch MIT krb5, libfido2, libcbor, and required crypto/build dependencies
   as pinned external repositories with checksums and license metadata.
-- [ ] Build dependencies from source under Bazel. Initially prefer upstream
+- [x] Build dependencies from source under Bazel. Initially prefer upstream
   configure/Make and CMake builds through rules_foreign_cc, behind local labels.
-- [ ] Build MIT's client libraries, the profile API, the macOS shared-cache
+- [x] Build MIT's client libraries, the profile API, the macOS shared-cache
   backend, and stock PKINIT support needed for the later FAST milestone.
-- [ ] Build libfido2 with the macOS HID backend and an explicitly selected
+- [x] Build libfido2 with the macOS HID backend and an explicitly selected
   feature set. Resolve libcbor, libcrypto, and zlib without host package lookup.
-- [ ] Add minimal build/link/load probes, including a C consumer and a small
+- [x] Add minimal build/link/load probes, including a C consumer and a small
   Objective-C or Swift bridge consumer. These are build tests only: no worker,
   passkey implementation, UI, or live authentication.
-- [ ] Record the native-library versus bundled-library choices, configure
+- [x] Record the native-library versus bundled-library choices, configure
   options, generated tools, and any narrowly scoped patches in docs/BUILD.md.
 
 Acceptance:
 
-- [ ] Clean Bazel output base can fetch and build the declared dependencies
+- [x] Clean Bazel output base can fetch and build the declared dependencies
   using the documented prerequisites, with no Homebrew requirement.
-- [ ] Once fetched, build actions do not fetch further sources or discover
+- [x] Once fetched, build actions do not fetch further sources or discover
   undeclared libraries through pkg-config, PATH, `/opt/homebrew`, or `/usr/local`.
-- [ ] Architecture and deployment target are consistent across native and
+- [x] Architecture and deployment target are consistent across native and
   foreign builds. Host tools are distinguished from target artifacts.
-- [ ] Link/load probes pass. PKINIT and cache-backend artifacts exist and their
+- [x] Link/load probes pass. PKINIT and cache-backend artifacts exist and their
   linkage is audited; actual authentication is intentionally deferred.
-- [ ] Any SDK/framework dependency with questionable public-API status is
+- [x] Any SDK/framework dependency with questionable public-API status is
   documented, especially the macOS cache integration. Do not describe a
   working legacy path as automatically supported by Apple.
-- [ ] A reproducible CI build or documented clean-machine reproduction exists.
+- [x] A reproducible CI build or documented clean-machine reproduction exists.
+
+### Implementation evidence — 2026-09-05
+
+- Bazel **8.8.0**, Apple CLT **26.6.0.0.1781586589**, macOS SDK **26.5**,
+  Apple clang **21.0.0 (clang-2100.1.1.101)**; arm64 only, minimum macOS **14.0**.
+  This is a pinned CLT/SDK build baseline, not a claim that full Xcode,
+  Swift compilation, or app/XPC bundles have been tested. Full Xcode is M2 work.
+- Rules: apple_support **2.8.1**, rules_cc **0.2.22**, rules_apple **4.5.3**,
+  rules_swift **3.6.1**, rules_shell **0.8.0**, platforms **1.1.0**.
+  rules_foreign_cc is the checksummed HEAD snapshot
+  **f68b351c4691e747f889dc5e4c2cac3cd3b66ea2**, not its latest release.
+  `.bazelversion`, `MODULE.bazel`, and `MODULE.bazel.lock` record the pins.
+- Sources: MIT krb5 **1.22.2**, libfido2 **1.17.0**, libcbor **0.14.0**,
+  zlib **1.3.2**, OpenSSL **3.6.4**. Build tools: CMake **4.4.3**,
+  Ninja **1.13.2**, GNU Make **4.4.1**. Checksums and license metadata are in
+  `MODULE.bazel` and `third_party/README.md`.
+- OpenSSL **4.0.2** was attempted. Its opaque ASN.1 structures and changed
+  const-qualified APIs break stock MIT PKINIT. **3.6.4**, the newest maintained
+  3.x release, builds stock PKINIT without a crypto port or suppressed errors.
+- `bazel test //...` passes the C consumer, Objective-C bridge, PKINIT load,
+  linkage audit, and relocation probe. `//:milestone1` groups the five tests.
+  The relocation test uses a path containing spaces and an empty environment.
+- `BAZEL=/absolute/path/to/bazel-8.8.0-darwin-arm64 ./build/reproduce.sh`
+  creates a fresh output base, fetches inputs, and then runs all five tests
+  with `--nofetch --lockfile_mode=error`. Build actions run in the Darwin
+  sandbox with network disabled and a system-only PATH. No Homebrew libraries
+  or tools are required. The final clean run completed **71 actions** and
+  **5/5 passing tests** on 2026-09-05. See `docs/BUILD.md` for prerequisites
+  and commands.
+- The linkage audit confirms arm64/macOS 14.0 artifacts, versioned `@rpath`
+  library references, valid ad-hoc signatures, CCAPI framework linkage, and
+  stock PKINIT entry points. Cache publication, KDC access, FIDO device access,
+  and execution on the oldest deployment OS are intentionally not claimed.
+- MIT's legacy Kerberos framework and private `com.apple.GSSCred` protocol
+  dependencies are documented. Working linkage is not public Apple API support.
 
 ## Milestone 2 — XPC boundary and console harness
 
@@ -204,11 +240,11 @@ versions on GitHub Releases. Test every architecture actually advertised.
 
 | Decision | Resolve by | Default direction |
 | --- | --- | --- |
-| Bazel/rules/Xcode versions and minimum macOS | M1 | Stable compatible pins; no speculative version numbers |
-| Intel support | M1 | arm64 first; explicit release decision |
-| MIT/libfido2 crypto dependencies | M1 | Supported native options where available; bundle OpenSSL as needed |
-| Static versus dynamic third-party linkage | M1 | Keep one consistent MIT runtime in worker and plugin |
-| JSON library | M1/M4 | Small established parser; do not write a parser to save a dependency |
+| Bazel/rules/Apple SDK and minimum macOS | M1 resolved | Pins above; CLT baseline tested; full Xcode/bundles validated in M2 |
+| Intel support | M1 resolved | arm64 only; x86_64 is not a release requirement |
+| MIT/libfido2 crypto dependencies | M1 resolved | Bundle OpenSSL 3.6.4; stock PKINIT is incompatible with 4.0.2 |
+| Static versus dynamic third-party linkage | M1 resolved | Shared MIT/OpenSSL; static libfido2/libcbor/zlib; one MIT runtime |
+| JSON library | M4 | Deferred until the passkey wire parser is needed; use an established parser |
 | Shared-cache backend support and visibility | M1/M3 | Revalidate existing MIT-to-macOS path |
 | XPC DTOs, service identity, console hosting | M2 | Embedded unprivileged NSXPC service |
 | Profile backend completeness and discovery | M3 | Immutable in-memory profile plus explicit options |

@@ -11,10 +11,13 @@ terminal, a domain join, or a manually maintained `krb5.conf`.
 
 ## Status
 
-**Documentation and repository scaffold only. No dependency builds, worker,
-plugin, or application are implemented yet.** The minimal `MODULE.bazel` names
-the project; `BUILD.bazel` only exposes documentation. Bazel/toolchain versions
-and external dependencies will be selected and pinned in milestone 1.
+Milestone 1 implements arm64 macOS dependency builds with Bazel 8.8.0,
+pinned upstream sources, C/Objective-C probes, PKINIT loading and linkage
+checks. No worker, passkey plugin, UI, or authentication is implemented yet.
+
+See [docs/BUILD.md](docs/BUILD.md) for the exact Apple CLT/SDK prerequisites,
+dependency choices, and clean reproduction. Run `bazel test //...` after
+checking prerequisites with `./build/check_prerequisites.sh`.
 
 Start with [PLAN.md](PLAN.md), which defines the milestone order and acceptance
 criteria. Supporting documents describe:
@@ -44,8 +47,8 @@ criteria. Supporting documents describe:
 
 ## Planned source layout
 
-Create implementation packages as their milestones begin; these paths are a
-design, not existing build targets:
+The build, third-party, and build-probe packages exist after milestone 1.
+The remaining implementation packages will be created in later milestones:
 
 ```text
 app/             SwiftUI/AppKit menu-bar application (later)

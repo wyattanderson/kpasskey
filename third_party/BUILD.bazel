@@ -1,0 +1,111 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake", "configure_make")
+load("//build:foreign.bzl", "CMAKE", "ENV", "RELOCATE")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(glob(["*.BUILD.bazel", "*.patch"]))
+
+configure_make(
+    name = "openssl",
+    lib_source = "@openssl_src//:sources",
+    configure_command = "Configure",
+    configure_prefix = "/usr/bin/perl",
+    configure_in_place = True,
+    configure_options = [
+        "darwin64-arm64-cc", "shared", "no-tests", "no-apps", "no-docs",
+        "no-module", "no-zlib", "--libdir=lib",
+        "--openssldir=/nonexistent/kpasskey/openssl",
+    ],
+    env = ENV | {"AR": "/usr/bin/ar"},
+    targets = ["build_libs", "install_dev"],
+    args = ["-j8", "MODULESDIR=/nonexistent/kpasskey/openssl/modules"],
+    out_shared_libs = ["libssl.3.dylib", "libcrypto.3.dylib"],
+    postfix_script = RELOCATE,
+)
+
+cmake(
+    generate_args = ["-GNinja"],
+    name = "libcbor",
+    lib_source = "@libcbor_src//:sources",
+    cache_entries = CMAKE | {
+        "BUILD_SHARED_LIBS": "OFF", "WITH_TESTS": "OFF", "WITH_EXAMPLES": "OFF",
+        "CBOR_PRETTY_PRINTER": "OFF", "SANITIZE": "OFF",
+    },
+    env = ENV,
+    out_static_libs = ["libcbor.a"],
+)
+
+cmake(
+    generate_args = ["-GNinja"],
+    name = "zlib",
+    lib_source = "@zlib_src//:sources",
+    cache_entries = CMAKE | {
+        "ZLIB_BUILD_TESTING": "OFF", "ZLIB_BUILD_SHARED": "OFF",
+        "ZLIB_BUILD_STATIC": "ON", "ZLIB_INSTALL": "ON",
+    },
+    env = ENV,
+    out_static_libs = ["libz.a"],
+)
+
+cmake(
+    generate_args = ["-GNinja"],
+    name = "libfido2",
+    copts = ["-U_FORTIFY_SOURCE"],
+    lib_source = "@libfido2_src//:sources",
+    deps = [":libcbor", ":openssl", ":zlib"],
+    cache_entries = CMAKE | {
+        "BUILD_SHARED_LIBS": "OFF", "BUILD_STATIC_LIBS": "ON",
+        "BUILD_TESTS": "OFF", "BUILD_EXAMPLES": "OFF", "BUILD_TOOLS": "OFF",
+        "BUILD_MANPAGES": "OFF", "USE_HIDAPI": "OFF", "USE_PCSC": "OFF",
+        "USE_WINHELLO": "OFF", "NFC_LINUX": "OFF",
+        "CMAKE_REQUIRED_INCLUDES": "$$EXT_BUILD_DEPS/libcbor/include;$$EXT_BUILD_DEPS/openssl/include;$$EXT_BUILD_DEPS/zlib/include",
+        "CBOR_INCLUDE_DIRS": "$$EXT_BUILD_DEPS/libcbor/include",
+        "CBOR_LIBRARY_DIRS": "$$EXT_BUILD_DEPS/libcbor/lib",
+        "CBOR_LIBRARIES": "$$EXT_BUILD_DEPS/libcbor/lib/libcbor.a",
+        "CRYPTO_INCLUDE_DIRS": "$$EXT_BUILD_DEPS/openssl/include",
+        "CRYPTO_LIBRARY_DIRS": "$$EXT_BUILD_DEPS/openssl/lib",
+        "CRYPTO_LIBRARIES": "$$EXT_BUILD_DEPS/openssl/lib/libcrypto.3.dylib",
+        "CRYPTO_VERSION": "3.6.4",
+        "ZLIB_INCLUDE_DIRS": "$$EXT_BUILD_DEPS/zlib/include",
+        "ZLIB_LIBRARY_DIRS": "$$EXT_BUILD_DEPS/zlib/lib",
+        "ZLIB_LIBRARIES": "$$EXT_BUILD_DEPS/zlib/lib/libz.a",
+    },
+    env = ENV,
+    out_static_libs = ["libfido2.a"],
+    linkopts = ["-Wl,-framework,IOKit", "-Wl,-framework,CoreFoundation"],
+)
+
+configure_make(
+    name = "krb5",
+    lib_source = "@krb5_src//:sources",
+    configure_command = "src/configure",
+    configure_options = [
+        "--enable-shared", "--disable-static", "--enable-pkinit",
+        "--with-crypto-impl=openssl", "--with-tls-impl=no",
+        "--without-libedit", "--without-readline", "--without-system-verto",
+        "--without-keyutils", "--without-lmdb", "--disable-nls",
+        "--without-krb5-config", "--disable-rpath",
+    ],
+    deps = [":openssl"],
+    env = ENV | {
+        "YACC": "/usr/bin/false", "LEX": "/usr/bin/false",
+        "AR": "/usr/bin/ar", "RANLIB": "/usr/bin/ranlib",
+        "LDFLAGS": "-Wl,-rpath,$$EXT_BUILD_DEPS/openssl/lib",
+    },
+    # Override only the top-level traversal; recursive Makefiles retain their
+    # own SUBDIRS. The source patch defines KPASSKEY_SUBDIRS at the top level.
+    args = ["-j8", "KPASSKEY_SUBDIRS='util include lib plugins/preauth/pkinit'"],
+    out_shared_libs = [
+        "libkrb5.3.3.dylib", "libk5crypto.3.1.dylib", "libcom_err.3.0.dylib",
+        "libkrb5support.1.1.dylib", "libgssapi_krb5.2.2.dylib",
+    ],
+    out_data_files = ["lib/krb5/plugins/preauth/pkinit.so"],
+    postfix_script = RELOCATE,
+)
+
+filegroup(name = "pkinit", srcs = [":krb5"], output_group = "gen_dir")
+filegroup(name = "openssl_tree", srcs = [":openssl"], output_group = "gen_dir")
+
+filegroup(
+    name = "license_notices",
+    srcs = glob(["licenses/*"]),
+)

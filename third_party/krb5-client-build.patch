@@ -1,0 +1,13 @@
+--- a/src/Makefile.in
++++ b/src/Makefile.in
+@@ -32,6 +32,10 @@
+ 	plugins/tls/k5tls \
+ 	kdc kadmin kprop clients appl tests \
+ 	config-files build-tools man doc @po@
++ifneq ($(KPASSKEY_SUBDIRS),)
++SUBDIRS=$(KPASSKEY_SUBDIRS)
++endif
++
+ WINSUBDIRS=include util lib ccapi windows clients appl plugins\preauth\spake \
+ 	$(PKINIT_SUBDIR)
+ BUILDTOP=$(REL).

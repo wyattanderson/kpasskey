@@ -1,0 +1,49 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+cc_test(
+    name = "dependency_probe",
+    size = "small",
+    srcs = ["dependency_probe.c"],
+    deps = ["//third_party:krb5", "//third_party:libfido2"],
+)
+objc_library(
+    name = "bridge",
+    srcs = ["bridge.m"],
+    sdk_frameworks = ["Foundation"],
+    deps = ["//third_party:krb5"],
+)
+cc_test(
+    name = "bridge_probe",
+    size = "small",
+    srcs = ["bridge_main.c"],
+    deps = [":bridge"],
+)
+sh_test(
+    name = "load_probe",
+    size = "small",
+    args = ["$(rootpath //third_party:pkinit)"],
+    srcs = ["load_probe.sh"],
+    data = [":dependency_probe", "//third_party:pkinit"],
+)
+
+sh_test(
+    name = "linkage_audit",
+    size = "small",
+    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)"],
+    srcs = ["linkage_audit.sh"],
+    data = [
+        ":dependency_probe", ":bridge_probe",
+        "//third_party:pkinit", "//third_party:openssl_tree",
+        "//third_party:libfido2", "//third_party:libcbor", "//third_party:zlib",
+    ],
+)
+
+sh_test(
+    name = "relocation_probe",
+    size = "small",
+    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)"],
+    srcs = ["relocation_probe.sh"],
+    data = [":dependency_probe", "//third_party:pkinit", "//third_party:openssl_tree"],
+)
