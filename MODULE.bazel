@@ -1,0 +1,6 @@
+# Dependency and toolchain setup is milestone 1. This scaffold is not a
+# declaration that MIT krb5, libfido2, or Apple bundle targets build yet.
+module(
+    name = "kpasskey",
+    version = "0.0.0",
+)

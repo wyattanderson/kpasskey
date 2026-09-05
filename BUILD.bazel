@@ -1,0 +1,5 @@
+filegroup(
+    name = "project_docs",
+    srcs = glob(["*.md", "docs/*.md"]),
+    visibility = ["//visibility:public"],
+)

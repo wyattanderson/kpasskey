@@ -1,0 +1,11 @@
+/bazel-*
+/dist/
+.DS_Store
+*.xcuserstate
+
+# Signing material and local credentials never belong in the repository.
+*.p12
+*.pfx
+*.keychain-db
+.env
+.env.*
