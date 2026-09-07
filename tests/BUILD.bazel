@@ -1,64 +1,112 @@
 load("@rules_apple//apple:macos.bzl", "macos_command_line_application")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_cc//cc:objc_library.bzl", "objc_library")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
 
-cc_test(
-    name = "dependency_probe",
-    size = "small",
-    srcs = ["dependency_probe.c"],
-    deps = ["//third_party:krb5", "//third_party:libfido2"],
-)
-objc_library(
+package(default_testonly = True)
+
+swift_library(
     name = "bridge",
-    srcs = ["bridge.m"],
-    sdk_frameworks = ["Foundation"],
-    deps = ["//third_party:krb5"],
-)
-objc_library(
-    name = "bridge_main",
-    testonly = True,
-    srcs = ["bridge_main.c"],
-    deps = [":bridge"],
-)
-macos_command_line_application(
-    name = "bridge_app",
-    testonly = True,
-    minimum_os_version = "14.0",
-    # The relocation test stages this signed executable in bin/ beside lib/.
-    linkopts = ["-rpath", "@executable_path/../lib"],
-    deps = [":bridge_main"],
-)
-cc_test(
-    name = "bridge_probe",
-    size = "small",
-    srcs = ["bridge_main.c"],
-    deps = [":bridge"],
-)
-sh_test(
-    name = "load_probe",
-    size = "small",
-    args = ["$(rootpath //third_party:pkinit)"],
-    srcs = ["load_probe.sh"],
-    data = [":dependency_probe", "//third_party:pkinit"],
+    module_name = "KerberosProbe",
+    srcs = ["KerberosProbe.swift"],
+    deps = ["//third_party:krb5_swift"],
 )
 
-sh_test(
-    name = "linkage_audit",
-    size = "small",
-    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)", "$(rootpath :bridge_app)"],
-    srcs = ["linkage_audit.sh"],
-    data = [
-        ":dependency_probe", ":bridge_probe", ":bridge_app",
-        "//third_party:pkinit", "//third_party:openssl_tree",
-        "//third_party:libfido2", "//third_party:libcbor", "//third_party:zlib",
+swift_library(
+    name = "dependency_support",
+    module_name = "DependencyProbe",
+    srcs = ["DependencyProbe.swift"],
+    deps = [
+        ":bridge",
+        "//third_party:libcbor_swift",
+        "//third_party:libfido2_swift",
+        "//third_party:openssl_swift",
+        "//third_party:zlib_swift",
     ],
 )
 
-sh_test(
-    name = "relocation_probe",
+[
+    swift_library(
+        name = name + "_main",
+        srcs = [src],
+        copts = ["-parse-as-library"],
+        deps = deps,
+    )
+    for name, src, deps in [
+        ("bridge", "BridgeMain.swift", [":bridge"]),
+        ("dependency", "DependencyMain.swift", [":bridge", ":dependency_support"]),
+    ]
+]
+
+[
+    macos_command_line_application(
+        name = name + "_app",
+        minimum_os_version = "14.0",
+        # Both signed executables run unchanged in bin/ beside lib/.
+        linkopts = ["-rpath", "@executable_path/../lib"],
+        deps = [":" + name + "_main"],
+    )
+    for name in ["bridge", "dependency"]
+]
+
+swift_test(
+    name = "bridge_probe",
     size = "small",
-    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)", "$(rootpath :bridge_app)"],
-    srcs = ["relocation_probe.sh"],
-    data = [":dependency_probe", ":bridge_app", "//third_party:pkinit", "//third_party:openssl_tree"],
+    srcs = ["BridgeTests.swift"],
+    deps = [":bridge"],
 )
+
+swift_test(
+    name = "dependency_probe",
+    size = "small",
+    srcs = ["DependencyTests.swift"],
+    deps = [":bridge", ":dependency_support"],
+)
+
+swift_library(
+    name = "build_test_support",
+    module_name = "BuildTestSupport",
+    srcs = ["BuildTestSupport.swift"],
+)
+
+swift_test(
+    name = "load_probe",
+    size = "small",
+    srcs = ["LoadTests.swift"],
+    env = {"KPASSKEY_KRB5": "$(rootpath //third_party:pkinit)"},
+    data = ["//third_party:pkinit"],
+    deps = [":bridge", ":build_test_support"],
+)
+
+[
+    swift_test(
+        name = name,
+        size = "small",
+        srcs = [src],
+        env = {
+            "KPASSKEY_KRB5": "$(rootpath //third_party:pkinit)",
+            "KPASSKEY_OPENSSL": "$(rootpath //third_party:openssl_tree)",
+            "KPASSKEY_BRIDGE_APP": "$(rootpath :bridge_app)",
+            "KPASSKEY_DEPENDENCY_APP": "$(rootpath :dependency_app)",
+            "KPASSKEY_BRIDGE_TEST": "$(rootpath :bridge_probe)",
+            "KPASSKEY_DEPENDENCY_TEST": "$(rootpath :dependency_probe)",
+            "KPASSKEY_ARCH": "arm64",
+            "KPASSKEY_MINIMUM_OS": "14.0",
+        },
+        data = [
+            ":bridge_app",
+            ":dependency_app",
+            ":bridge_probe",
+            ":dependency_probe",
+            "//third_party:pkinit",
+            "//third_party:openssl_tree",
+            "//third_party:libfido2",
+            "//third_party:libcbor",
+            "//third_party:zlib",
+        ],
+        deps = [":build_test_support"],
+    )
+    for name, src in [
+        ("linkage_audit", "LinkageTests.swift"),
+        ("relocation_probe", "RelocationTests.swift"),
+    ]
+]

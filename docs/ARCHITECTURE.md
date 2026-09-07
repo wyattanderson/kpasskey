@@ -19,8 +19,15 @@ operation state, MIT contexts, blocking library work, temporary secrets,
 device handles, and credential publication. The plugin is a small C ABI adapter
 loaded into that worker, not a separate service and not an AppKit component.
 
+Implement these components and their tests in Swift, using modern Swift tooling
+and Swift Testing as required by [AGENTS.md](../AGENTS.md). The plugin's C ABI
+describes its interface, not a requirement to implement its logic in C. A C or
+Objective-C shim is allowed only for a documented interoperability limitation
+that makes it absolutely and functionally necessary; keep it minimal.
+
 Use NSXPCConnection with Objective-C-compatible protocols and Foundation secure
-coding types. Swift code may wrap these in typed async APIs. XPC connects
+coding types implemented in Swift through Objective-C interoperability. Use
+Swift for the typed client adapter and its async APIs. XPC connects
 processes; it does not deliver work directly to the UI thread. The client
 adapter must explicitly dispatch presentation updates to the main actor.
 Apple documents the underlying model in [Creating XPC Services](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingXPCServices.html).
@@ -41,7 +48,7 @@ input. Do not substitute a shell subprocess or test-only IPC protocol.
 
 ## Proposed message contract
 
-These are semantic operations, not finalized Swift/Objective-C signatures.
+These are semantic operations, not finalized Swift signatures.
 Milestone 2 must specify exact allowed classes, size limits, ownership, and
 error codes before implementing authentication.
 

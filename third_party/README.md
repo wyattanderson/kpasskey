@@ -16,7 +16,7 @@ integrity pins, not a claim of independent signature verification.
 | GNU Make | GPL-3.0-or-later, upstream `COPYING` | Built host tool; not shipped |
 | Ninja | Apache-2.0, upstream `COPYING` | Downloaded host tool; not shipped |
 | rules_foreign_cc | Apache-2.0, upstream `LICENSE` | Builds upstream native dependencies |
-| rules_shell / platforms | Apache-2.0, upstream `LICENSE` files | Shell tests and platform constraints |
+| rules_shell / platforms | Apache-2.0, upstream `LICENSE` files | Upstream build-rule shell support and platform constraints |
 | rules_cc / rules_apple / rules_swift / apple_support | Apache-2.0, upstream `LICENSE` files | Native language and Apple toolchain rules |
 
 Apple's SDK, frameworks, compiler, system Perl, and system command-line
@@ -24,6 +24,11 @@ utilities are build prerequisites governed by their own licenses. They are
 not vendored or redistributed here. Transitive build-rule dependencies are
 recorded in the lockfile and retain their own upstream licenses. This inventory
 does not assign a license to new KPasskey code; settle that before distribution.
+
+The headers under `swift/` contain only includes of the generated upstream
+headers. Their Bazel wrappers expose Clang modules to Swift without adding C
+implementation code. Required upstream libraries retain their implementation
+languages under the policy in [AGENTS.md](../AGENTS.md).
 
 ## Patches
 

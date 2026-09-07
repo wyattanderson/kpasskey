@@ -11,10 +11,10 @@ terminal, a domain join, or a manually maintained `krb5.conf`.
 
 ## Status
 
-Milestone 1 implements arm64 macOS dependency builds with Bazel,
-C/Objective-C probes (including a `rules_apple` command-line application),
-PKINIT loading and linkage checks. No worker, passkey plugin, UI, or
-authentication is implemented yet.
+Milestone 1 implements arm64 macOS dependency builds with Bazel, Swift probes
+and Swift Testing, signed `rules_apple` command-line applications, PKINIT
+loading, linkage checks, and relocation tests. No worker, passkey plugin, UI,
+or authentication is implemented yet.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after
@@ -30,6 +30,14 @@ criteria. Supporting documents describe:
 
 ## Decisions
 
+- Swift is the primary and mandatory language for all project-owned code,
+  including tests, tools, the worker, harness, adapters, and plugin logic.
+  Use modern Swift tooling, with Swift Testing mandatory for automated tests
+  unless a required testing capability is unavailable. C or Objective-C is
+  allowed only where it is **absolutely and functionally necessary**, with a
+  documented Swift interoperability limitation and the smallest possible shim.
+  Calling a C library or implementing an Objective-C-compatible protocol is
+  not itself an exception. See [AGENTS.md](AGENTS.md) for the full policy.
 - Write a purpose-built MIT krb5 client preauthentication plugin.
 - Use `../macos-passkey` as a behavioral reference, not a source dependency.
   Preserve compatibility with the FreeIPA KDC protocol, **not** with the old
@@ -39,7 +47,9 @@ criteria. Supporting documents describe:
 - Use a bundled, unprivileged XPC worker and a shared native client interface.
   The future UI and an earlier command-line harness use the same worker path.
 - Use Bazel with Bzlmod external repositories. Use `rules_apple` for macOS
-  application and XPC bundles, and `rules_swift` where Swift is compiled.
+  application and XPC bundles, and `rules_swift` for Swift compilation and tests.
+  Keep upstream dependencies in their upstream languages and build configuration
+  in Bazel; the Swift requirement applies to our implementation.
 - Prefer supported native macOS libraries where practical. A bundled OpenSSL
   dependency is acceptable; eliminating it must not become a prerequisite.
 - Configure Kerberos through typed application settings and library APIs.

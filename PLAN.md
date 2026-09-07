@@ -19,6 +19,23 @@ The first four milestones deliberately establish the build, process boundary,
 and ordinary Kerberos behavior before introducing passkey authentication.
 Do not combine them into one app implementation effort.
 
+## Mandatory implementation policy
+
+Swift is the primary and mandatory language for all project-owned executable
+code across every milestone, including XPC contracts, worker/harness code,
+Kerberos and FIDO adapters, plugin logic, tools, and tests. Use modern Swift
+tooling and Swift Testing for automated tests. A different test framework
+requires a documented functional capability unavailable in Swift Testing.
+
+C or Objective-C is allowed only when **absolutely and functionally necessary**
+because supported Swift interoperability cannot express a required API or ABI.
+Document the specific limitation, keep the shim minimal, and keep the remaining
+logic in Swift. C dependencies, C ABI entry points, and Objective-C-compatible
+protocols do not automatically qualify. Build-wiring effort and existing C
+examples do not qualify either. Required upstream libraries keep their upstream
+languages; Bazel remains the build system. [AGENTS.md](AGENTS.md) defines the
+repository-wide policy.
+
 ## Existing evidence and its limits
 
 The sibling `macos-passkey` prototype has a working path consisting of Homebrew
@@ -57,8 +74,8 @@ Deliverables:
   backend, and stock PKINIT support needed for the later FAST milestone.
 - [x] Build libfido2 with the macOS HID backend and an explicitly selected
   feature set. Resolve libcbor, libcrypto, and zlib without host package lookup.
-- [x] Add minimal build/link/load probes, including a C consumer and a small
-  Objective-C or Swift bridge consumer. These are build tests only: no worker,
+- [x] Add minimal Swift build/link/load probes and Swift Testing cases with
+  signed command-line consumers. These are build tests only: no worker,
   passkey implementation, UI, or live authentication.
 - [x] Record the native-library versus bundled-library choices, configure
   options, generated tools, and any narrowly scoped patches in docs/BUILD.md.
@@ -81,11 +98,12 @@ Acceptance:
 ### Implementation evidence
 
 - Bazel selects full Xcode for both native and foreign builds and discovers
-  its version and default SDK. The bridge also builds as a rules_apple
-  command-line application; Swift compilation and app/XPC bundles remain M2
-  work. Required pins and compatibility rationale live in the build files.
-- `bazel test //...` passes the C consumer, Objective-C bridge, PKINIT load,
-  linkage audit, and relocation probe. `//:milestone1` groups the five tests.
+  its version and default SDK. Shared Swift probe libraries build through
+  rules_swift and link into rules_apple command-line applications. App/XPC
+  bundles remain M2 work. Required pins and compatibility rationale live in
+  the build files.
+- `bazel test //...` passes the Swift consumer, Swift bridge, PKINIT load,
+  linkage audit, and relocation probe. `//:milestone1` groups these checks.
   The relocation test uses a path containing spaces and an empty environment.
 - Direct Bazel commands in `docs/BUILD.md` reproduce the build in a fresh
   output base with a locked fetch followed by tests without fetching.
@@ -94,11 +112,33 @@ Acceptance:
   strategy. No Homebrew libraries or tools are required.
 - Linkage and relocation checks cover the configured architecture and
   deployment target, relative library references, signatures, CCAPI linkage,
-  and stock PKINIT entry points. The Apple executable runs after relocation
-  without modification after signing. Cache publication, KDC access, FIDO
-  device access, and execution on the oldest deployment OS remain unverified.
+  and stock PKINIT entry points. Both Apple executables run after relocation
+  without modification after signing. Cache publication, KDC access, FIDO device
+  access, and execution on the oldest deployment OS remain unverified.
 - MIT's legacy Kerberos framework and private `com.apple.GSSCred` protocol
   dependencies are documented. Working linkage is not public Apple API support.
+
+### Swift probe migration
+
+The initial C/Objective-C probes and shell test drivers have been replaced by
+Swift. Declaration-only umbrella headers expose the upstream C libraries;
+no C or Objective-C implementation shim is needed.
+
+- [x] Replace the Objective-C bridge and C entry point with a Swift consumer
+  that calls the MIT profile/context APIs directly. Preserve the rules_apple
+  command-line application and its signed, unmodified relocation check.
+- [x] Replace the C dependency probe with Swift. Expose the declared
+  third-party headers as Clang modules through Bazel, retain explicit pointer
+  ownership/cleanup, and preserve the bundled-library origin, dependency,
+  PKINIT symbol, and shared MIT runtime checks.
+- [x] Express test cases in Swift Testing through rules_swift. Keep a small
+  Swift executable for empty-environment relocation so a test runner does not
+  become a requirement of the relocated probe. Reuse probe logic where useful.
+- [x] Replace shell test orchestration with Swift Testing and Foundation
+  process/file APIs. Invoke macOS inspection tools directly, without a shell.
+- [x] Run `bazel test //...` and the documented clean reproduction after the
+  migration. Preserve linkage, deployment-target, signing, PKINIT loading, and
+  relocation coverage; validate Swift runtime availability after relocation.
 
 ## Milestone 2 — XPC boundary and console harness
 
@@ -109,8 +149,9 @@ Deliverables:
 - [ ] Finalize the contract in docs/ARCHITECTURE.md: version negotiation,
   operation IDs, configuration snapshot, interaction IDs, events, results,
   error categories, cancellation, and connection lifecycle.
-- [ ] Implement shared Objective-C-compatible XPC protocols and explicitly
-  allowed secure message types. Keep the client adapter usable from Swift.
+- [ ] Implement shared XPC protocols and explicitly allowed secure message
+  types in Swift using Objective-C interoperability. Implement the shared
+  client adapter in Swift.
 - [ ] Build an embedded `.xpc` service with rules_apple. Start with a scripted
   fake worker that emits interaction requests and terminal results.
 - [ ] Package a minimal console harness in a host `.app` so it exercises the
@@ -180,8 +221,10 @@ Deliverables:
 
 - [ ] Define protocol fixtures and expected rejection behavior from the KDC-side
   implementation; use synthetic data and an independent decoding oracle.
-- [ ] Implement the minimal MIT clpreauth plugin described in docs/PROTOCOL.md.
-  Reuse no old helper CLI, terminal prompt parsing, or checkout-relative paths.
+- [ ] Implement the minimal MIT clpreauth plugin described in docs/PROTOCOL.md
+  in Swift, with a C ABI shim only if a documented interoperability limitation
+  makes it absolutely and functionally necessary. Reuse no old helper CLI,
+  terminal prompt parsing, or checkout-relative paths.
 - [ ] Add the libfido2 adapter with device selection, PIN/UV policy, explicit
   operation deadlines, cancellation, and useful device error categories.
 - [ ] Route assertions through MIT's responder boundary into the worker's XPC

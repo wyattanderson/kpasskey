@@ -1,7 +1,16 @@
 # Bazel dependency builds
 
-Milestone 1 builds dependencies and exercises C, Objective-C, and dynamic
-loading. It does not implement a worker, UI, passkey plugin, or authentication.
+Milestone 1 builds dependencies and exercises Swift interoperability with C
+libraries, dynamic loading, linkage, and relocation through Swift Testing.
+It does not implement a worker, UI, passkey plugin, or authentication.
+
+Following [AGENTS.md](../AGENTS.md), Swift and modern Swift tooling are required
+for project-owned implementation and executable tools, with Swift Testing required
+for automated tests unless a needed capability is unavailable and documented.
+C/Objective-C is allowed only when absolutely and functionally necessary for
+an API/ABI that supported Swift interoperability cannot express. Upstream
+native dependencies retain their implementation languages, and Bazel Starlark
+and declarative configuration remain the build mechanism.
 
 ## Setup
 
@@ -11,16 +20,22 @@ requirements. `.bazelversion`, `MODULE.bazel`, and `MODULE.bazel.lock` record
 the build-tool and dependency versions.
 
 Install Xcode and complete its first-launch setup, including license
-acceptance. `.bazelrc` selects `/Applications/Xcode.app` with repository and
-action `DEVELOPER_DIR` settings so native and foreign builds use the same
+acceptance. `.bazelrc` selects `/Applications/Xcode.app` with the repository
+`DEVELOPER_DIR` setting so native and foreign builds use the same
 installation even when the machine-wide `xcode-select` setting points to
 Command Line Tools. Bazel discovers Xcode's version and default SDK; neither
-is pinned. If Xcode lives elsewhere, override both
-`--repo_env=DEVELOPER_DIR=...` and `--action_env=DEVELOPER_DIR=...`.
+is pinned. If Xcode lives elsewhere, override `--repo_env=DEVELOPER_DIR=...`.
+Let Bazel derive action/test `DEVELOPER_DIR` and `SDKROOT` from that discovered
+Xcode. An explicit action `DEVELOPER_DIR` bypasses part of Bazel's SDK discovery
+and can leave the Swift test runner looking for frameworks in Command Line
+Tools instead. Do not work around this with a pinned SDK path or shell launcher.
 
-The bridge uses `rules_apple` to link and ad-hoc sign a macOS command-line
-application. App/XPC bundling, Swift compilation, and execution on the oldest
-supported macOS remain later milestone validation.
+The probes use `rules_swift` for compilation and Swift Testing, and `rules_apple`
+to link and ad-hoc sign standalone command-line applications. The Swift language
+mode is enabled in `.bazelrc`; use the selected Xcode's Swift Testing library
+and the test runner supplied by rules_swift. No separate package manager or
+project-owned test launcher is needed. App/XPC bundling and execution on the
+oldest supported macOS remain later milestone validation.
 The Apple SDK/compiler and macOS utilities are documented host inputs, not a
 claim of a completely hermetic or SDK-independent toolchain.
 
@@ -72,6 +87,12 @@ Application code should depend on these local labels:
 | `//third_party:openssl` | Shared libcrypto and libssl |
 | `//third_party:zlib` | Static compression library |
 
+Swift consumers use the corresponding `_swift` labels (for example,
+`//third_party:krb5_swift`). These declaration-only wrappers expose generated
+upstream headers as Clang modules and preserve each library's Bazel include
+paths and linkage. The import names are `CMITKerberos`, `CFIDO2`, `CCBOR`,
+`COpenSSL`, and `CZlib`. No library implementation is copied into the wrappers.
+
 libfido2, libcbor, and zlib use upstream CMake with Ninja. MIT and OpenSSL use
 upstream configure/Make through rules_foreign_cc. GNU Make is built from the
 rules_foreign_cc checksummed archive in Bazel's execution configuration.
@@ -115,7 +136,7 @@ All native and foreign target builds share the architecture and deployment
 target defined in the build configuration. CMake receives
 the toolchain-resolved `SDKROOT`, architecture and minimum version;
 configure/Make receives Bazel's Apple compiler/linker flags and the same
-SDKROOT/deployment environment. The action `DEVELOPER_DIR` setting also keeps
+SDKROOT/deployment environment. Bazel's derived `DEVELOPER_DIR` also keeps
 rules_foreign_cc's direct `xcode-select`/`xcrun` calls on the selected Xcode.
 The action PATH contains only macOS utilities. CMake package registries and
 host environment searching are disabled; `/opt/homebrew` and `/usr/local`
@@ -137,8 +158,9 @@ prerequisites from macOS/Xcode. None is a shipped third-party target library.
 ## Linkage and cache compatibility
 
 Bundled: MIT client/support/com_err, OpenSSL, libfido2, libcbor, zlib.
-Native: libSystem and SDK libraries/frameworks, Foundation for the bridge,
-IOKit/CoreFoundation for HID, and the legacy Kerberos framework for CCAPI.
+Native: libSystem and SDK libraries/frameworks, the system Swift runtime,
+Foundation for test orchestration, IOKit/CoreFoundation for HID, and the legacy
+Kerberos framework for CCAPI.
 Apple's Kerberos implementation does not replace MIT's ABI.
 
 MIT `src/lib/krb5/ccache/cc_api_macos.c` registers the `API:` cache backend.
@@ -164,24 +186,32 @@ product configuration. M3/M4 must supply isolated profiles and explicit paths.
 
 ## Verification targets
 
+All test cases use Swift Testing, with shared Swift probe functions and
+Foundation process/file APIs replacing the initial C/Objective-C code and shell
+drivers. Swift owns cleanup around imported pointer APIs. The OpenSSL
+header/runtime check uses the full version string because Swift cannot import
+the synthesized numeric macro. Standalone relocation executables share probe
+logic without linking test frameworks.
+
 - `//tests:dependency_probe`: an in-memory MIT profile/context, origin check
   for MIT libkrb5, FIDO object allocation without device enumeration, CBOR
-  round trip, OpenSSL digest, and zlib compression/decompression.
-- `//tests:bridge_probe`: Objective-C/Foundation bridge calling the same MIT
-  profile/context APIs from a C executable. `//tests:bridge_app` also builds
-  that entry point and bridge with `rules_apple`'s
+  round trip, OpenSSL digest checked against a known SHA-256 value, and zlib
+  compression/decompression. `//tests:dependency_app` exercises the shared
+  functions as a signed Swift executable.
+- `//tests:bridge_probe`: Swift calling the MIT profile/context APIs directly.
+  `//tests:bridge_app` also builds that consumer with `rules_apple`'s
   `macos_command_line_application`; the relocation test stages and runs it.
 - `//tests:load_probe`: `dlopen(RTLD_NOW)` of stock PKINIT, both init entry
   points present, and the plugin resolving the same MIT context function.
 - `//tests:linkage_audit`: arm64/minimum OS on archives, dylibs and PKINIT, closure of
   `@rpath` dependencies, no host/staging library references or absolute rpaths,
-  valid ad-hoc signatures (including the Apple command-line application),
+  valid ad-hoc signatures (including both Apple command-line applications),
   legacy CCAPI linkage and GSSCred marker present.
 - `//tests:relocation_probe`: copy only the declared runtime libraries, PKINIT,
-  C probe and Apple command-line application to a directory with spaces.
-  The C probe's Bazel rpaths are replaced and it is re-signed; the Apple
-  executable already links with `@executable_path/../lib` and is verified
-  and run without modification. Both execute with an empty environment.
+  and both signed Swift command-line applications to a directory with spaces.
+  Both executables link with `@executable_path/../lib`; their bytes and
+  signatures are checked before running with an empty environment. No rpath
+  rewriting or re-signing occurs in the test.
 
 These are build/link/load checks. They do not contact a KDC, enumerate a
 security key, test a PIN, obtain a TGT, or establish release readiness.
@@ -189,9 +219,9 @@ security key, test a PIN, obtain a TGT, or establish release readiness.
 ## Later bundle and distribution work
 
 Extend the current rules_apple command-line build with application/XPC rules
-and rules_swift when M2 begins. Finalize
-resource placement and nested signatures through bundle rules. Test relocation
-including spaces, Hardened Runtime, Developer ID signing, notarization,
+when M2 begins, using the rules_swift integration established by the probe
+migration. Finalize resource placement and nested signatures through bundle
+rules. Test relocation including spaces, Hardened Runtime, Developer ID signing, notarization,
 stapling and Gatekeeper on clean Macs. Publish archives/DMGs, checksums and
 third-party notices on GitHub Releases only after the later release criteria
 in PLAN.md are met.

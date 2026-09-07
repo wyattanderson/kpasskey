@@ -1,4 +1,6 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake", "configure_make")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
 load("//build:foreign.bzl", "CMAKE", "ENV", "RELOCATE")
 
 package(default_visibility = ["//visibility:public"])
@@ -104,6 +106,32 @@ configure_make(
 
 filegroup(name = "pkinit", srcs = [":krb5"], output_group = "gen_dir")
 filegroup(name = "openssl_tree", srcs = [":openssl"], output_group = "gen_dir")
+
+# Declaration-only umbrellas expose the generated upstream headers to Swift.
+# Keep the libraries' include paths and linkage in their existing CcInfo.
+[
+    cc_library(
+        name = name + "_swift",
+        hdrs = ["swift/" + name + ".h"],
+        aspect_hints = [":" + name + "_swift_interop"],
+        deps = [":" + name],
+    )
+    for name in ["krb5", "libfido2", "libcbor", "openssl", "zlib"]
+]
+
+[
+    swift_interop_hint(
+        name = name + "_swift_interop",
+        module_name = module_name,
+    )
+    for name, module_name in [
+        ("krb5", "CMITKerberos"),
+        ("libfido2", "CFIDO2"),
+        ("libcbor", "CCBOR"),
+        ("openssl", "COpenSSL"),
+        ("zlib", "CZlib"),
+    ]
+]
 
 filegroup(
     name = "license_notices",

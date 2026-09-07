@@ -8,6 +8,14 @@ preserve `macos-passkey`'s command line, helper arguments/stdin/stdout contract,
 SSSD naming, source structure, JSON object ownership, or build assumptions.
 No SSSD source tree should be needed to build or ship KPasskey.
 
+Implement the plugin's protocol logic and the libfido2 adapter in Swift, with
+Swift Testing for fixtures and automated tests, following
+[AGENTS.md](../AGENTS.md). The MIT C ABI and the C reference sources below do
+not justify a C implementation. Use supported Swift interoperability first;
+retain a minimal C/Objective-C shim only where a documented API/ABI limitation
+makes it absolutely and functionally necessary. Keep parsing, validation,
+state handling, and orchestration in Swift.
+
 The sibling sources are a reference for investigation, particularly:
 
 - `sssd/src/krb5_plugin/passkey/passkey.h`: constants and message structures.
