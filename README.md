@@ -13,12 +13,16 @@ terminal, a domain join, or a manually maintained `krb5.conf`.
 
 Milestone 1 implements arm64 macOS dependency builds with Bazel, Swift probes
 and Swift Testing, signed `rules_apple` command-line applications, PKINIT
-loading, linkage checks, and relocation tests. No worker, passkey plugin, UI,
-or authentication is implemented yet.
+loading, linkage checks, and relocation tests. Milestone 2 adds shared Swift XPC
+contracts, a client adapter, an embedded fake worker, and a console host app with
+lifecycle and peer-identity tests. No passkey plugin, UI, or authentication is
+implemented yet.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after
-installing Xcode and completing its first-launch setup.
+installing Xcode and completing its first-launch setup. Run
+`bazel test --config=development //...` to exercise the ad-hoc signed XPC peers;
+the default configuration checks that release policy refuses those peers.
 
 Start with [PLAN.md](PLAN.md), which defines the milestone order and acceptance
 criteria. Supporting documents describe:
@@ -58,17 +62,15 @@ criteria. Supporting documents describe:
 
 ## Planned source layout
 
-The build, third-party, and build-probe packages exist after milestone 1.
-The remaining implementation packages will be created in later milestones:
+The build, third-party, tests, and XPC packages exist. Authentication and UI
+packages will be created in later milestones:
 
 ```text
 app/             SwiftUI/AppKit menu-bar application (later)
-ipc/             Shared XPC protocols, secure DTOs, and client adapter
-worker/          XPC service and operation orchestration
+xpc/             Shared contracts/client, fake worker, console host, unit tests
 kerberos/        MIT krb5 wrapper, profile backend, and cache operations
 plugin/          Purpose-built PA-REDHAT-PASSKEY adapter
 fido/            libfido2 device and assertion adapter
-harness/         Console client hosted in a minimal macOS bundle
 third_party/     External repository metadata, BUILD overlays, patches
 build/           Shared Bazel macros, platforms, packaging support
 tests/           Fixtures, build probes, XPC and integration tests

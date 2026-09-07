@@ -1,7 +1,7 @@
 # KPasskey project plan
 
-Status: milestone 1 implemented and build-tested on arm64 macOS.
-Milestones 2 onward remain pending; no authentication is implemented.
+Status: milestones 1 and 2 implemented and tested on arm64 macOS.
+Milestones 3 onward remain pending; no authentication is implemented.
 Decisions recorded: 2026-09-05.
 
 ## Objective and scope
@@ -146,34 +146,67 @@ no C or Objective-C implementation shim is needed.
 
 Deliverables:
 
-- [ ] Finalize the contract in docs/ARCHITECTURE.md: version negotiation,
+- [x] Finalize the contract in docs/ARCHITECTURE.md: version negotiation,
   operation IDs, configuration snapshot, interaction IDs, events, results,
   error categories, cancellation, and connection lifecycle.
-- [ ] Implement shared XPC protocols and explicitly allowed secure message
+- [x] Implement shared XPC protocols and explicitly allowed secure message
   types in Swift using Objective-C interoperability. Implement the shared
   client adapter in Swift.
-- [ ] Build an embedded `.xpc` service with rules_apple. Start with a scripted
+- [x] Build an embedded `.xpc` service with rules_apple. Start with a scripted
   fake worker that emits interaction requests and terminal results.
-- [ ] Package a minimal console harness in a host `.app` so it exercises the
+- [x] Package a minimal console harness in a host `.app` so it exercises the
   same embedded-service discovery as the eventual UI. Its executable is
   invoked from the terminal; no graphical UI is needed.
-- [ ] Define and test the development and release peer-authorization policy.
+- [x] Define and test the development and release peer-authorization policy.
   Use verified process/signing identity, not a bundle ID supplied in a message.
-- [ ] Make the harness display events and submit interaction responses using
+- [x] Make the harness display events and submit interaction responses using
   exactly the same client interface the UI will use.
 
 Acceptance:
 
-- [ ] Worker executes in a distinct process without root, a persistent global
+- [x] Worker executes in a distinct process without root, a persistent global
   Mach service, or manually installed launchd configuration.
-- [ ] Round trips, repeated operations, rejected concurrent requests, malformed
+- [x] Round trips, repeated operations, rejected concurrent requests, malformed
   messages, stale interaction responses, cancellation, worker termination,
   disconnect, and reconnection have defined and tested outcomes.
-- [ ] Cancellation is acknowledged promptly and eventually terminates the
+- [x] Cancellation is acknowledged promptly and eventually terminates the
   operation within a documented bound; exactly one terminal result is observed.
-- [ ] Moving the host bundle does not break worker discovery.
-- [ ] No Kerberos calls or device access yet. This milestone validates the
+- [x] Moving the host bundle does not break worker discovery.
+- [x] No Kerberos calls or device access yet. This milestone validates the
   process boundary, not authentication.
+
+### Implementation evidence
+
+- `xpc/` contains the Swift secure-coding contract, main-actor client adapter,
+  fake session, service entry point, and console entry point. rules_apple embeds
+  and signs the worker inside the host app. No C/Objective-C implementation,
+  shell launcher, installed launchd configuration, or new dependency is needed.
+- Swift Testing covers secure archives, message validation, negotiation,
+  operation/interaction replay, deadline cleanup, and both cancellation versus
+  completion orderings. The real host exercises success/failure, sequential and
+  rejected concurrent starts, cancellation, stale responses, malformed requests
+  and oversized archives, disconnect, forced worker termination, and recovery.
+  Terminal results are checked for uniqueness and event sequences for continuity.
+- The integration test invokes the signed host executable directly, verifies a
+  distinct worker process under the user identity, moves the app to a path with
+  spaces, checks nested signatures, and reruns with an empty environment. EOF
+  at a console prompt cancels. Host and worker link only platform libraries;
+  there are no Kerberos calls or device accesses.
+- Development mode requires an explicit build flag and pins live peers to the
+  expected bundled code hash and identifier. A differently signed executable
+  claiming the host identifier is rejected. Default/release policy requires an
+  Apple-anchored peer from the same signing team and fails closed for ad-hoc code.
+  Positive Developer ID signing and oldest-OS execution remain release checks;
+  development tests do not establish distribution readiness.
+- `bazel test --config=development //...` exercises the live XPC boundary and
+  milestone 1 regression checks. `bazel test //...` also checks the default
+  release policy's refusal of ad-hoc peers. Tests remain in the Darwin sandbox;
+  only rules_apple signing actions use its required local execution strategy.
+- Cancellation has a one-second client completion bound; a lost/nonresponsive
+  worker produces one local failure outcome. Negotiation allows launchd's
+  crash-restart delay. Exact lifecycle, deadline, and trust policies are in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); real blocking authentication
+  behavior remains M3/M4 work.
 
 ## Milestone 3 — Plain Kerberos worker and configuration
 
@@ -276,7 +309,7 @@ versions on GitHub Releases. Test every architecture actually advertised.
 | Static versus dynamic third-party linkage | M1 resolved | Shared MIT/OpenSSL; static libfido2/libcbor/zlib; one MIT runtime |
 | JSON library | M4 | Deferred until the passkey wire parser is needed; use an established parser |
 | Shared-cache backend support and visibility | M1/M3 | Revalidate existing MIT-to-macOS path |
-| XPC DTOs, service identity, console hosting | M2 | Embedded unprivileged NSXPC service |
+| XPC DTOs, service identity, console hosting | M2 resolved | Secure Swift envelopes; verified peer signing; embedded unprivileged service and console host |
 | Profile backend completeness and discovery | M3 | Immutable in-memory profile plus explicit options |
 | FreeIPA version test matrix | M4 | Start with the working deployment, record exact versions |
 | New-code license and dependency provenance | Before distribution | Track origin from first commit; no automatic relicensing of copied code |

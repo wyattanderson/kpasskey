@@ -2,7 +2,8 @@
 
 Milestone 1 builds dependencies and exercises Swift interoperability with C
 libraries, dynamic loading, linkage, and relocation through Swift Testing.
-It does not implement a worker, UI, passkey plugin, or authentication.
+Milestone 2 adds a signed console host and embedded scripted XPC worker. Neither
+milestone implements a UI, passkey plugin, or authentication.
 
 Following [AGENTS.md](../AGENTS.md), Swift and modern Swift tooling are required
 for project-owned implementation and executable tools, with Swift Testing required
@@ -34,8 +35,9 @@ The probes use `rules_swift` for compilation and Swift Testing, and `rules_apple
 to link and ad-hoc sign standalone command-line applications. The Swift language
 mode is enabled in `.bazelrc`; use the selected Xcode's Swift Testing library
 and the test runner supplied by rules_swift. No separate package manager or
-project-owned test launcher is needed. App/XPC bundling and execution on the
-oldest supported macOS remain later milestone validation.
+project-owned test launcher is needed. M2 also uses the native application and
+XPC service bundle rules. Execution on the oldest supported macOS remains
+release validation.
 The Apple SDK/compiler and macOS utilities are documented host inputs, not a
 claim of a completely hermetic or SDK-independent toolchain.
 
@@ -62,8 +64,8 @@ These direct Bazel commands ignore user/system bazelrc files, use a fresh output
 fetch `//...` with the committed lockfile, then test `//...` with `--nofetch`
 and `--lockfile_mode=error`. Repository downloads occur during fetch only.
 Compilation and test actions use the Darwin sandbox with network access
-disabled. rules_apple marks its `SignBinary` action `no-sandbox`, so that
-mnemonic alone uses the local strategy for ad-hoc signing. A shared
+disabled. rules_apple marks `SignBinary` and `ProcessAndSign` actions
+`no-sandbox`, so those signing mnemonics use the local strategy. A shared
 Bazel repository download cache may satisfy checksummed fetches; there is no
 shared action cache in the fresh output base. The output base and logs remain
 available for inspection. No prerequisite or reproduction wrapper is required.
@@ -72,6 +74,49 @@ When deliberately updating pins, run `bazel mod deps --lockfile_mode=update`,
 then `bazel test //...`, review the lockfile, and rerun the clean reproduction.
 Do not turn the HEAD override into a moving branch reference: resolve a new
 commit and checksum explicitly.
+
+## XPC console harness
+
+The default build compiles the release peer policy, which refuses ad-hoc peers.
+Use the explicit development configuration to exercise locally signed bundles:
+
+```sh
+bazel test --config=development //...
+bazel build --config=development //xpc:harness
+```
+
+`//:milestone2` selects just the secure-coding/state-machine and embedded-XPC
+integration tests. Without `--config=development`, its integration test verifies
+that the default policy refuses the ad-hoc host. With development enabled it
+launches the actual console executable, exchanges messages with launchd's
+embedded worker, moves the signed host to a path containing spaces, and repeats
+the lifecycle checks in an empty environment. Both modes must pass. Tests use
+Swift Testing and remain in the Darwin sandbox; XPC integration is local to this
+Mac's per-user launchd and is excluded from remote execution.
+
+The harness archive contains `KPasskeyHarness.app`, with `Worker.xpc` in
+`Contents/XPCServices`. Extract the Bazel archive with macOS `ditto` and run
+the console executable directly:
+
+```sh
+ditto -x -k bazel-bin/xpc/harness.zip /tmp/kpasskey-console
+/tmp/kpasskey-console/KPasskeyHarness.app/Contents/MacOS/KPasskeyHarness
+```
+
+The fake prompts accept `key-1`, then `continue`, or `cancel`. `--automatic`
+answers those synthetic prompts; `--exercise` runs the failure/lifecycle
+scenarios and intentionally kills only the negotiated fake worker. No passwords,
+PINs, Kerberos operations, device access, launch agents, or privileged installation
+are involved. The host and worker link only platform libraries. `xpc/Host.plist`
+and `xpc/Worker.plist` provide the required bundle package types and application
+service/run-loop declarations; rules_apple supplies the executable/identifier
+and nesting. No post-build patching or re-signing is needed for relocation.
+
+The development signing policy and its local-bundle trust assumption are in
+[ARCHITECTURE.md](ARCHITECTURE.md#peer-authorization). Release builds must omit
+the development flag and sign both endpoints with the release identity. Positive
+Developer ID acceptance and distribution validation remain later release work.
+Do not ship the fake harness as an authentication application.
 
 ## Dependency closure and local labels
 
@@ -218,10 +263,9 @@ security key, test a PIN, obtain a TGT, or establish release readiness.
 
 ## Later bundle and distribution work
 
-Extend the current rules_apple command-line build with application/XPC rules
-when M2 begins, using the rules_swift integration established by the probe
-migration. Finalize resource placement and nested signatures through bundle
-rules. Test relocation including spaces, Hardened Runtime, Developer ID signing, notarization,
+Extend the M2 application/XPC bundles with authentication resources and the
+native UI. Preserve their tested resource placement, nested signatures, and
+relocation behavior. Test Hardened Runtime, Developer ID signing, notarization,
 stapling and Gatekeeper on clean Macs. Publish archives/DMGs, checksums and
 third-party notices on GitHub Releases only after the later release criteria
 in PLAN.md are met.

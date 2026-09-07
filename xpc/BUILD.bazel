@@ -1,0 +1,69 @@
+load("@rules_apple//apple:macos.bzl", "macos_application", "macos_xpc_service")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Development opt-in is a build choice, never an environment or XPC message switch.
+config_setting(name = "development_peers", define_values = {"kpasskey_development": "true"})
+
+swift_library(
+    name = "contract",
+    module_name = "KPasskeyContract",
+    srcs = ["Contract.swift", "PeerPolicy.swift"],
+    defines = select({":development_peers": ["DEVELOPMENT_PEERS"], "//conditions:default": []}),
+)
+
+swift_library(
+    name = "client",
+    module_name = "KPasskeyClient",
+    srcs = ["Client.swift"],
+    deps = [":contract"],
+)
+
+swift_library(
+    name = "worker",
+    module_name = "KPasskeyWorker",
+    srcs = ["FakeSession.swift"],
+    deps = [":contract"],
+)
+
+swift_library(
+    name = "worker_main",
+    srcs = ["WorkerMain.swift"],
+    copts = ["-parse-as-library"],
+    deps = [":contract", ":worker"],
+)
+
+macos_xpc_service(
+    name = "worker_service",
+    bundle_name = "Worker",
+    bundle_id = "org.kpasskey.harness.worker",
+    infoplists = ["Worker.plist"],
+    minimum_os_version = "14.0",
+    deps = [":worker_main"],
+)
+
+swift_library(
+    name = "harness_main",
+    srcs = ["HarnessMain.swift"],
+    copts = ["-parse-as-library"],
+    deps = [":client", ":contract"],
+)
+
+macos_application(
+    name = "harness",
+    bundle_name = "KPasskeyHarness",
+    bundle_id = "org.kpasskey.harness",
+    infoplists = ["Host.plist"],
+    minimum_os_version = "14.0",
+    xpc_services = [":worker_service"],
+    deps = [":harness_main"],
+)
+
+swift_test(
+    name = "contract_tests",
+    size = "small",
+    srcs = ["ContractTests.swift"],
+    deps = [":contract", ":worker"],
+)

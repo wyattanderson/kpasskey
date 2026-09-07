@@ -28,13 +28,14 @@ public func artifact(_ name: String) throws -> URL {
 @discardableResult
 public func run(
   _ executable: String, _ arguments: [String] = [],
-  environment: [String: String]? = nil, directory: URL? = nil
+  environment: [String: String]? = nil, directory: URL? = nil, input: FileHandle? = nil
 ) throws -> String {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: executable)
   process.arguments = arguments
   process.environment = environment
   process.currentDirectoryURL = directory
+  process.standardInput = input
   let pipe = Pipe()
   process.standardOutput = pipe
   process.standardError = pipe

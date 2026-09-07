@@ -46,23 +46,69 @@ from a terminal. Prove service lookup and lifecycle with the chosen packaging.
 The host has no graphical UI; its interactions are text and secure terminal
 input. Do not substitute a shell subprocess or test-only IPC protocol.
 
-## Proposed message contract
+## Milestone 2 message contract
 
-These are semantic operations, not finalized Swift signatures.
-Milestone 2 must specify exact allowed classes, size limits, ownership, and
-error codes before implementing authentication.
+The implemented protocols are `WorkerProtocol.exchange(_:reply:)` and
+`ClientProtocol.receive(_:)` in `xpc/Contract.swift`. Both exchange immutable
+`Message: NSObject, NSSecureCoding` objects. `WorkerClient` is the shared
+main-actor async adapter; the console uses its `connect`, `start`, `respond`,
+`cancel`, and `disconnect` methods and receives presentation events on the
+main actor. Its lower-level `exchange` method also exercises invalid commands.
+
+Protocol version 1 supports only `fake`. Each connection must negotiate before
+starting. A mismatched version returns `unsupportedVersion`; it does not change
+negotiated state. The negotiation reply includes the fake worker PID for the
+harness's process-boundary and termination checks. There is no authentication
+mode, credential result, or device API in this implementation.
 
 | Direction | Operation | Meaning |
 | --- | --- | --- |
 | Client to worker | Negotiate | Protocol version and supported operation types |
-| Client to worker | Start authentication | Request ID, auth mode, immutable settings snapshot; acknowledgment only |
+| Client to worker | Start | UUID operation ID and immutable fake configuration snapshot; acknowledgment only |
 | Worker to client | Progress | Request ID, sequence, structured stage and safe metadata |
-| Worker to client | Request interaction | Request ID, interaction ID, type, deadline, bounded prompt metadata |
-| Client to worker | Submit interaction | IDs and typed response, such as device choice or secret bytes |
+| Worker to client | Request interaction | Operation UUID, new interaction UUID, sequence, stage, remaining deadline in milliseconds |
+| Client to worker | Submit interaction | IDs and the stage-specific `key-1` or `continue` response |
 | Client to worker | Cancel | Request ID; idempotent acknowledgment |
-| Worker to client | Complete | Exactly one terminal success, cancellation, or categorized failure |
+| Worker to client | Complete | Exactly one terminal fake success, cancellation, or categorized failure |
 
-Expected interaction types are password, security-key selection, PIN, and
+`Message.kind` is one of the command names `negotiate`, `start`, `respond`,
+`cancel`; replies use `negotiated` or `ack`; callbacks use `progress`,
+`interaction`, or `terminal`. `value` carries the capability, stage, answer,
+or `Status` category according to that kind. Unused fields must be empty/zero
+and configuration may occur only on a start. Operation and interaction IDs are
+canonical uppercase UUID strings, so changing letter case cannot bypass replay
+protection. The worker repeats validation after secure decoding. Unknown
+commands and illegal field combinations return `protocolViolation`; invalid
+secure archives cause XPC to reject the message/connection. The client checks
+reply versions, categories, callback shapes, and contiguous event sequences.
+
+The allowed request/reply object graph is exactly `Message`, `Snapshot`, and
+`NSString`; callbacks allow `Message` and `NSString`. Nested decoders specify
+the same concrete classes. There are no arbitrary dictionaries, `NSError`
+payloads, native pointers, or executable/resource paths. Limits are measured in
+UTF-8 bytes: kind 32, IDs 36, value/principal/realm 256 each. Decode validation
+bounds accepted objects, not Foundation's transient allocation of a hostile
+archive. Framework transport limits still apply before these semantic checks.
+
+`Snapshot` schema 1 holds principal, realm, scripted `success`/`failure`, and
+an operation timeout from 200 through 30,000 milliseconds. Names must be
+nonempty and contain no control characters. These fields are immutable and
+owned by the operation; synthetic console defaults are not product Kerberos
+defaults. M3 defines the real configuration schema separately. No secrets are
+accepted in M2. The scripted stages are `started`, `selectKey`, then `touch`.
+Each interaction reports the remaining shared operation deadline; answering a
+prompt does not extend it. The worker enforces a monotonic deadline and checks
+it again when accepting a response. Relative remaining time is a presentation
+hint; the worker remains authoritative.
+
+Acknowledgments use `ok`, `unsupportedVersion`, `protocolViolation`, `busy`,
+or `staleInteraction`. Worker terminals use `ok`, `scriptedFailure`,
+`cancelled`, or `deadlineExceeded`. Fake `ok` does not claim a ticket exists.
+The adapter synthesizes `workerLost`, `disconnected`, or `protocolViolation`
+when the transport disappears or misbehaves, and suppresses later callbacks
+for that operation. Authentication-specific categories below belong to M3/M4.
+
+Future authentication interaction types are password, security-key selection, PIN, and
 device presence/verification guidance. Authentication results contain principal,
 realm, cache reference, expiry/renewal metadata, and authentication mode. Do not
 send raw tickets, session keys, FAST armor keys, or native library pointers to
@@ -74,6 +120,33 @@ input is validated again in the worker. Disallow arbitrary plugin paths, shell
 commands, environment changes, or file-write destinations in the contract.
 
 ## Scheduling and lifecycle
+
+M2 permits one active operation per connection. A second start returns `busy`
+without cancelling or replacing the first and receives no terminal event.
+Completed operation IDs cannot be reused on that connection. Replay history
+is bounded at 1,024 accepted starts; reconnect to start a fresh session after
+that limit. Each operation's callbacks start at sequence 1. Stale/wrong-stage
+responses never advance the active operation. Duplicate cancellation is an
+idempotent `ok`, including unknown or finished IDs, and emits no extra terminal.
+
+Cancellation and timer handling run on the same main actor as the fake state
+machine; no task blocks that actor on terminal input. Cancellation cleanup and
+terminal emission occur during handling of the cancel command, independently
+of reply delivery order. The adapter gives cancellation one second to finish,
+then invalidates the connection and emits a single `workerLost` terminal if
+necessary. Negotiation allows fifteen seconds for launchd's crash-restart
+throttle; ordinary RPCs have a five-second watchdog. Operation completion has
+the configured deadline plus one second of transport allowance. These are
+software scheduling bounds, not a guarantee while a process or OS is suspended.
+M3 must establish new bounds for blocking Kerberos calls.
+
+Interruption, invalidation, and explicit disconnect end that connection's
+operations, cancel timers, clear replay state, and resolve all pending client
+continuations. A disconnected worker cannot deliver its own terminal; the
+adapter supplies that outcome locally. `connect()` creates a new generation,
+renegotiates, and ignores callbacks from previous generations. There is no
+automatic retry/resume or credential publication. Independent connections
+have independent state; M2 does not claim worker-global authentication locking.
 
 - Initially permit one active authentication operation per connection/worker
   policy; reject extra starts explicitly. Add concurrency only when needed.
@@ -102,9 +175,36 @@ deadline expiry, protocol violations, worker loss, and cache publication failure
 Keep underlying error codes for sanitized diagnostics; user-facing wording is
 owned by the client. Avoid raw arbitrary error payloads and secret-bearing logs.
 
-Verify connecting peers using available process/code-signing identity, bound
-to our own app or harness. Development signing is an explicit policy, not a
-production identity bypass. Constrain decoded object graphs and message sizes.
+## Peer authorization
+
+Both endpoints call `NSXPCConnection.setCodeSigningRequirement` before
+activation. macOS checks actual peer code identity on messages, avoiding PID
+lookup races and any trust in a bundle ID supplied over XPC. The listener also
+requires the connecting effective UID to equal its own. Service listeners do
+not support the listener-wide requirement API, so enforcement is installed
+on each accepted connection before any exported method can execute.
+See Apple's [connection signing requirement API](https://developer.apple.com/documentation/foundation/nsxpcconnection/setcodesigningrequirement(_:)).
+
+Release/default builds require an Apple-anchored peer with the expected signing
+identifier and the same Team ID as the running endpoint. Team IDs come from
+Security.framework signing information for the current process, never messages,
+settings, or environment variables. Missing Team ID fails closed. Host and worker
+identifiers are fixed in the shared contract. Release tests parse the requirement,
+reject ad-hoc code and malformed identity inputs, and verify that an ad-hoc host
+cannot connect with the default build. Positive Developer ID signing, notarization,
+and distribution remain release acceptance work requiring the release identity.
+
+`--config=development` explicitly compiles the ad-hoc fallback. With no Team ID,
+it checks the expected peer bundle's signature and identifier, reads its code
+hash, and requires that exact identifier/hash on the live XPC peer. The host
+uses its embedded worker; the worker uses its enclosing host. Paths derive from
+bundle layout and survive relocation. This policy trusts the developer-controlled
+bundle on disk: a local user able to replace that entire bundle can replace its
+development trust roots. It is not a distribution security policy. A team-signed
+development build still uses the release requirement. Tests cover genuine local
+peers and a differently signed executable claiming the same host identifier.
+
+Constrain decoded object graphs and message sizes.
 Erase mutable secret buffers where feasible and document unavoidable copies
 made by UI, serialization, and framework layers. Never claim XPC guarantees
 zero-copy secret storage or universal erasure.
