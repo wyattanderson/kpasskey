@@ -4,6 +4,7 @@ cd "${TEST_SRCDIR}/${TEST_WORKSPACE}"
 fail() { echo "$*" >&2; exit 1; }
 krb=$1
 crypto=$2
+bridge_app=$3
 plugin="$krb/lib/krb5/plugins/preauth/pkinit.so"
 for artifact in "$krb"/lib/*.dylib "$crypto"/lib/*.dylib "$plugin"; do
     [ -f "$artifact" ] || fail "Missing artifact: $artifact"
@@ -31,13 +32,14 @@ for artifact in "$krb"/lib/*.dylib "$crypto"/lib/*.dylib "$plugin"; do
     fi
     /usr/bin/codesign --verify "$artifact"
 done
-for artifact in third_party/libfido2/lib/libfido2.a third_party/libcbor/lib/libcbor.a third_party/zlib/lib/libz.a tests/dependency_probe tests/bridge_probe; do
+for artifact in third_party/libfido2/lib/libfido2.a third_party/libcbor/lib/libcbor.a third_party/zlib/lib/libz.a tests/dependency_probe tests/bridge_probe "$bridge_app"; do
     [ "$(/usr/bin/lipo -archs "$artifact")" = arm64 ] || fail "Wrong artifact architecture: $artifact"
     /usr/bin/otool -l "$artifact" | /usr/bin/awk '
         $1 == "minos" { if ($2 != "14.0") exit 1; found = 1 }
         END { if (!found) exit 1 }
     ' || fail "Wrong artifact minimum OS: $artifact"
 done
+/usr/bin/codesign --verify "$bridge_app"
 /usr/bin/nm -u "$krb/lib/libkrb5.3.3.dylib" | /usr/bin/grep '^_cc_initialize$' >/dev/null || fail 'Missing CCAPI reference'
 /usr/bin/strings "$krb/lib/libkrb5.3.3.dylib" | /usr/bin/grep 'com.apple.GSSCred' >/dev/null || fail 'Missing macOS GSSCred backend'
 /usr/bin/otool -L "$krb/lib/libkrb5.3.3.dylib" | /usr/bin/grep '/Kerberos.framework/' >/dev/null || fail 'Missing Kerberos framework linkage'

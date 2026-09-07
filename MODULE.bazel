@@ -60,6 +60,8 @@ http_archive(
     build_file = "//third_party:source.BUILD.bazel",
 )
 
+# Stock MIT PKINIT requires ASN.1 structures and API signatures changed in
+# OpenSSL 4. Keep this on a compatible 3.x release until MIT supports that API.
 http_archive(
     name = "openssl_src",
     url = "https://github.com/openssl/openssl/releases/download/openssl-3.6.4/openssl-3.6.4.tar.gz",

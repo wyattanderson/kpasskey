@@ -1,10 +1,7 @@
 """Shared policy for the arm64 macOS dependency builds."""
 
-SDK = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
-
 ENV = {
     "MACOSX_DEPLOYMENT_TARGET": "14.0",
-    "SDKROOT": SDK,
     "PKG_CONFIG": "/usr/bin/false",
     "PKG_CONFIG_LIBDIR": "/nonexistent",
     "PKG_CONFIG_PATH": "",
@@ -15,12 +12,14 @@ CMAKE = {
     "CMAKE_BUILD_TYPE": "Release",
     "CMAKE_OSX_ARCHITECTURES": "arm64",
     "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
-    "CMAKE_OSX_SYSROOT": SDK,
+    # rules_foreign_cc resolves SDKROOT from the selected Apple toolchain.
+    "CMAKE_OSX_SYSROOT": "$$SDKROOT",
     "CMAKE_INSTALL_LIBDIR": "lib",
     "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
     "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
     "CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH": "OFF",
     "CMAKE_IGNORE_PREFIX_PATH": "/opt/homebrew;/usr/local",
+    # Upstream libfido2 declares an older minimum than modern CMake accepts.
     "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
 }
 

@@ -44,9 +44,9 @@ The prototype compiles approximately 1,302 lines of SSSD C implementation
 
 Deliverables:
 
-- [x] Select and pin a mutually compatible stable Bazel, Xcode/SDK, rules_cc,
-  rules_apple, rules_swift, and rules_foreign_cc combination; add `.bazelversion`
-  and commit the appropriate Bzlmod lockfile.
+- [x] Configure compatible Bazel and Apple build rules with Xcode discovery;
+  record required dependency pins in the build configuration and commit the
+  appropriate Bzlmod lockfile.
 - [x] Set an explicit minimum macOS version and initial architecture. Start
   with arm64; decide and document whether x86_64 is a release requirement.
 - [x] Fetch MIT krb5, libfido2, libcbor, and required crypto/build dependencies
@@ -78,38 +78,25 @@ Acceptance:
   working legacy path as automatically supported by Apple.
 - [x] A reproducible CI build or documented clean-machine reproduction exists.
 
-### Implementation evidence — 2026-09-05
+### Implementation evidence
 
-- Bazel **8.8.0**, Apple CLT **26.6.0.0.1781586589**, macOS SDK **26.5**,
-  Apple clang **21.0.0 (clang-2100.1.1.101)**; arm64 only, minimum macOS **14.0**.
-  This is a pinned CLT/SDK build baseline, not a claim that full Xcode,
-  Swift compilation, or app/XPC bundles have been tested. Full Xcode is M2 work.
-- Rules: apple_support **2.8.1**, rules_cc **0.2.22**, rules_apple **4.5.3**,
-  rules_swift **3.6.1**, rules_shell **0.8.0**, platforms **1.1.0**.
-  rules_foreign_cc is the checksummed HEAD snapshot
-  **f68b351c4691e747f889dc5e4c2cac3cd3b66ea2**, not its latest release.
-  `.bazelversion`, `MODULE.bazel`, and `MODULE.bazel.lock` record the pins.
-- Sources: MIT krb5 **1.22.2**, libfido2 **1.17.0**, libcbor **0.14.0**,
-  zlib **1.3.2**, OpenSSL **3.6.4**. Build tools: CMake **4.4.3**,
-  Ninja **1.13.2**, GNU Make **4.4.1**. Checksums and license metadata are in
-  `MODULE.bazel` and `third_party/README.md`.
-- OpenSSL **4.0.2** was attempted. Its opaque ASN.1 structures and changed
-  const-qualified APIs break stock MIT PKINIT. **3.6.4**, the newest maintained
-  3.x release, builds stock PKINIT without a crypto port or suppressed errors.
+- Bazel selects full Xcode for both native and foreign builds and discovers
+  its version and default SDK. The bridge also builds as a rules_apple
+  command-line application; Swift compilation and app/XPC bundles remain M2
+  work. Required pins and compatibility rationale live in the build files.
 - `bazel test //...` passes the C consumer, Objective-C bridge, PKINIT load,
   linkage audit, and relocation probe. `//:milestone1` groups the five tests.
   The relocation test uses a path containing spaces and an empty environment.
-- `BAZEL=/absolute/path/to/bazel-8.8.0-darwin-arm64 ./build/reproduce.sh`
-  creates a fresh output base, fetches inputs, and then runs all five tests
-  with `--nofetch --lockfile_mode=error`. Build actions run in the Darwin
-  sandbox with network disabled and a system-only PATH. No Homebrew libraries
-  or tools are required. The final clean run completed **71 actions** and
-  **5/5 passing tests** on 2026-09-05. See `docs/BUILD.md` for prerequisites
-  and commands.
-- The linkage audit confirms arm64/macOS 14.0 artifacts, versioned `@rpath`
-  library references, valid ad-hoc signatures, CCAPI framework linkage, and
-  stock PKINIT entry points. Cache publication, KDC access, FIDO device access,
-  and execution on the oldest deployment OS are intentionally not claimed.
+- Direct Bazel commands in `docs/BUILD.md` reproduce the build in a fresh
+  output base with a locked fetch followed by tests without fetching.
+  Compilation/tests run in the Darwin sandbox with network disabled and a
+  system-only PATH; rules_apple binary signing uses its required local
+  strategy. No Homebrew libraries or tools are required.
+- Linkage and relocation checks cover the configured architecture and
+  deployment target, relative library references, signatures, CCAPI linkage,
+  and stock PKINIT entry points. The Apple executable runs after relocation
+  without modification after signing. Cache publication, KDC access, FIDO
+  device access, and execution on the oldest deployment OS remain unverified.
 - MIT's legacy Kerberos framework and private `com.apple.GSSCred` protocol
   dependencies are documented. Working linkage is not public Apple API support.
 
@@ -240,9 +227,9 @@ versions on GitHub Releases. Test every architecture actually advertised.
 
 | Decision | Resolve by | Default direction |
 | --- | --- | --- |
-| Bazel/rules/Apple SDK and minimum macOS | M1 resolved | Pins above; CLT baseline tested; full Xcode/bundles validated in M2 |
+| Bazel/rules/Apple SDK and minimum macOS | M1 resolved | Build configuration owns pins and deployment target; discover Xcode/SDK; app/XPC bundles validated in M2 |
 | Intel support | M1 resolved | arm64 only; x86_64 is not a release requirement |
-| MIT/libfido2 crypto dependencies | M1 resolved | Bundle OpenSSL 3.6.4; stock PKINIT is incompatible with 4.0.2 |
+| MIT/libfido2 crypto dependencies | M1 resolved | Bundle OpenSSL; compatibility rationale lives beside its pin in MODULE.bazel |
 | Static versus dynamic third-party linkage | M1 resolved | Shared MIT/OpenSSL; static libfido2/libcbor/zlib; one MIT runtime |
 | JSON library | M4 | Deferred until the passkey wire parser is needed; use an established parser |
 | Shared-cache backend support and visibility | M1/M3 | Revalidate existing MIT-to-macOS path |
@@ -251,6 +238,6 @@ versions on GitHub Releases. Test every architecture actually advertised.
 | FreeIPA version test matrix | M4 | Start with the working deployment, record exact versions |
 | New-code license and dependency provenance | Before distribution | Track origin from first commit; no automatic relicensing of copied code |
 
-Update this plan with actual commands, pinned versions, evidence, and remaining
-failures as each milestone lands. A successful stub or compile is not evidence
-that an authentication or release milestone is complete.
+Update this plan with meaningful validation and remaining failures as each
+milestone lands. Keep pins in the build configuration. A successful stub or
+compile is not evidence that an authentication or release milestone is complete.

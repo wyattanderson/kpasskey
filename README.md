@@ -11,13 +11,14 @@ terminal, a domain join, or a manually maintained `krb5.conf`.
 
 ## Status
 
-Milestone 1 implements arm64 macOS dependency builds with Bazel 8.8.0,
-pinned upstream sources, C/Objective-C probes, PKINIT loading and linkage
-checks. No worker, passkey plugin, UI, or authentication is implemented yet.
+Milestone 1 implements arm64 macOS dependency builds with Bazel,
+C/Objective-C probes (including a `rules_apple` command-line application),
+PKINIT loading and linkage checks. No worker, passkey plugin, UI, or
+authentication is implemented yet.
 
-See [docs/BUILD.md](docs/BUILD.md) for the exact Apple CLT/SDK prerequisites,
+See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after
-checking prerequisites with `./build/check_prerequisites.sh`.
+installing Xcode and completing its first-launch setup.
 
 Start with [PLAN.md](PLAN.md), which defines the milestone order and acceptance
 criteria. Supporting documents describe:

@@ -1,3 +1,4 @@
+load("@rules_apple//apple:macos.bzl", "macos_command_line_application")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
@@ -13,6 +14,20 @@ objc_library(
     srcs = ["bridge.m"],
     sdk_frameworks = ["Foundation"],
     deps = ["//third_party:krb5"],
+)
+objc_library(
+    name = "bridge_main",
+    testonly = True,
+    srcs = ["bridge_main.c"],
+    deps = [":bridge"],
+)
+macos_command_line_application(
+    name = "bridge_app",
+    testonly = True,
+    minimum_os_version = "14.0",
+    # The relocation test stages this signed executable in bin/ beside lib/.
+    linkopts = ["-rpath", "@executable_path/../lib"],
+    deps = [":bridge_main"],
 )
 cc_test(
     name = "bridge_probe",
@@ -31,10 +46,10 @@ sh_test(
 sh_test(
     name = "linkage_audit",
     size = "small",
-    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)"],
+    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)", "$(rootpath :bridge_app)"],
     srcs = ["linkage_audit.sh"],
     data = [
-        ":dependency_probe", ":bridge_probe",
+        ":dependency_probe", ":bridge_probe", ":bridge_app",
         "//third_party:pkinit", "//third_party:openssl_tree",
         "//third_party:libfido2", "//third_party:libcbor", "//third_party:zlib",
     ],
@@ -43,7 +58,7 @@ sh_test(
 sh_test(
     name = "relocation_probe",
     size = "small",
-    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)"],
+    args = ["$(rootpath //third_party:pkinit)", "$(rootpath //third_party:openssl_tree)", "$(rootpath :bridge_app)"],
     srcs = ["relocation_probe.sh"],
-    data = [":dependency_probe", "//third_party:pkinit", "//third_party:openssl_tree"],
+    data = [":dependency_probe", ":bridge_app", "//third_party:pkinit", "//third_party:openssl_tree"],
 )
