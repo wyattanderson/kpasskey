@@ -30,10 +30,12 @@ public final class WorkerClient {
     disconnect()
     let token = UUID()
     generation = token
-    let connection = NSXPCConnection(serviceName: workerIdentifier)
+    let identifier = Bundle.main.bundleIdentifier == applicationIdentifier
+      ? applicationWorkerIdentifier : workerIdentifier
+    let connection = NSXPCConnection(serviceName: identifier)
     let service = Bundle.main.bundleURL.appendingPathComponent("Contents/XPCServices/Worker.xpc")
     connection.setCodeSigningRequirement(
-      try PeerPolicy.requirement(peer: service, identifier: workerIdentifier))
+      try PeerPolicy.requirement(peer: service, identifier: identifier))
     connection.remoteObjectInterface = workerInterface()
     connection.exportedInterface = clientInterface()
     connection.exportedObject = EventSink { [weak self] event in

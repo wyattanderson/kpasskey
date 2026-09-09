@@ -5,6 +5,8 @@ load("//build:artifact.bzl", "pkinit_artifact")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["Worker.plist"])
+
 # Development opt-in is a build choice, never an environment or XPC message switch.
 config_setting(name = "development_peers", define_values = {"kpasskey_development": "true"})
 
@@ -18,7 +20,14 @@ swift_library(
 swift_library(
     name = "client",
     module_name = "KPasskeyClient",
-    srcs = ["Client.swift"],
+    srcs = ["Client.swift", "Authentication.swift"],
+    deps = [":contract"],
+)
+
+swift_test(
+    name = "authentication_tests",
+    size = "small",
+    srcs = ["Client.swift", "Authentication.swift", "AuthenticationTests.swift"],
     deps = [":contract"],
 )
 

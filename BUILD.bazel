@@ -5,6 +5,11 @@ filegroup(
 )
 
 test_suite(
+    name = "native",
+    tests = ["//xpc:authentication_tests", "//app:preferences_tests", "//tests:native_app"],
+)
+
+test_suite(
     name = "milestone4",
     tests = ["//passkey:tests", "//xpc:passkey_tests", "//:milestone3"],
 )

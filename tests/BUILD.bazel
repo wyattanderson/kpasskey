@@ -5,6 +5,25 @@ load("@rules_swift//swift:swift_test.bzl", "swift_test")
 package(default_testonly = True)
 
 swift_test(
+    name = "native_app",
+    size = "medium",
+    srcs = ["NativeAppTests.swift"],
+    env = select({
+        "//xpc:development_peers": {
+            "KPASSKEY_APP": "$(rootpath //app:KPasskey)",
+            "KPASSKEY_DEVELOPMENT": "true",
+        },
+        "//conditions:default": {
+            "KPASSKEY_APP": "$(rootpath //app:KPasskey)",
+            "KPASSKEY_DEVELOPMENT": "false",
+        },
+    }),
+    data = ["//app:KPasskey"],
+    tags = ["no-remote"],
+    deps = [":build_test_support"],
+)
+
+swift_test(
     name = "xpc_integration",
     size = "medium",
     srcs = ["XPCIntegrationTests.swift"],

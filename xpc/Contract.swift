@@ -2,6 +2,8 @@ import Foundation
 
 public let workerIdentifier = "org.kpasskey.harness.worker"
 public let hostIdentifier = "org.kpasskey.harness"
+public let applicationIdentifier = "org.kpasskey.KPasskey"
+public let applicationWorkerIdentifier = "org.kpasskey.KPasskey.worker"
 
 public enum Status: String, Sendable {
   case ok, protocolViolation, unsupportedVersion, busy, staleInteraction

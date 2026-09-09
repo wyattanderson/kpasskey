@@ -133,6 +133,12 @@ func cancellationCompletionRace(cancelFirst: Bool) async throws {
   let currentCode = try #require(code)
   let requiredIdentity = try #require(requirement)
   #expect(SecCodeCheckValidity(currentCode, [], requiredIdentity) != errSecSuccess)
+  for identifier in [applicationIdentifier, applicationWorkerIdentifier] {
+    let expression = try PeerPolicy.releaseRequirement(team: "ABCDEFGHIJ", identifier: identifier)
+    #expect(SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess)
+    let nativeRequirement = try #require(requirement)
+    #expect(SecCodeCheckValidity(currentCode, [], nativeRequirement) != errSecSuccess)
+  }
   #expect(throws: PeerPolicyError.self) {
     try PeerPolicy.releaseRequirement(team: "\" or true", identifier: hostIdentifier)
   }

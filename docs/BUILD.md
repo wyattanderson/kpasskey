@@ -5,7 +5,8 @@ libraries, dynamic loading, linkage, and relocation through Swift Testing.
 Milestone 2 adds a signed console host and embedded scripted XPC worker.
 Milestone 3 adds ordinary password authentication and shared-cache publication;
 live acceptance is tracked in PLAN.md. Milestone 4 adds the Swift passkey plugin,
-FIDO adapter and FAST armor. No graphical UI exists.
+FIDO adapter and FAST armor. The native app in `app/` adds SwiftUI sign-in,
+settings and menu-bar scenes; [NATIVE_PLAN.md](../NATIVE_PLAN.md) tracks that work.
 
 Following [AGENTS.md](../AGENTS.md), Swift and modern Swift tooling are required
 for project-owned implementation and executable tools, with Swift Testing required
@@ -305,11 +306,32 @@ logic without linking test frameworks.
 These are build/link/load checks. They do not contact a KDC, enumerate a
 security key, test a PIN, obtain a TGT, or establish release readiness.
 
-## Later bundle and distribution work
+## Native application
+
+```sh
+bazel build --config=development //app:KPasskey
+ditto -x -k bazel-bin/app/KPasskey.zip /tmp/kpasskey-native
+open /tmp/kpasskey-native/KPasskey.app
+```
+
+The app uses the same worker implementation and bundle contents as the console,
+with native host/service signing identifiers. The shared `Authentication`
+adapter owns presentation and response policy for both real-mode clients.
+Settings persist only validated configuration, including the selected public
+CA certificate; passwords and PINs remain transient.
+
+`bazel test --config=development //:native` checks shared presentation/secret
+validation, settings persistence and the relocated native bundle's XPC identity.
+The app's `Contents/MacOS/KPasskey --check-worker` diagnostic negotiates with the
+worker and exits without accessing a KDC, key or credential cache. The default
+test configuration verifies rejection of ad-hoc peers. The full suite continues
+to cover console interactions, dependency closure and plugin loading.
+
+## Distribution work
 
 Extend the M2 application/XPC bundles with authentication resources and the
 native UI. Preserve their tested resource placement, nested signatures, and
 relocation behavior. Test Hardened Runtime, Developer ID signing, notarization,
 stapling and Gatekeeper on clean Macs. Publish archives/DMGs, checksums and
 third-party notices on GitHub Releases only after the later release criteria
-in PLAN.md are met.
+in NATIVE_PLAN.md are met.

@@ -368,18 +368,11 @@ Acceptance:
   and system `klist`/consumer checks before marking milestone 4 accepted. Simulate
   lockout errors; do not exhaust a user's real PIN retry counter.
 
-## Later — Native application and release
+## Native application and release
 
-After the first four milestones, add the SwiftUI/AppKit menu-bar application,
-global shortcut, authentication window, settings UI, optional login item, and
-ticket status. Keep interaction decisions in a shared client adapter so the
-harness remains a useful diagnostic tool.
-
-Release acceptance includes a clean Mac with no Homebrew, bundle relocation
-(including paths containing spaces), hardware tests, nested code-signing,
-Hardened Runtime, notarization, stapling, and Gatekeeper assessment. Publish a
-signed archive or DMG, checksums, third-party notices, and supported macOS/CPU
-versions on GitHub Releases. Test every architecture actually advertised.
+The next development phase is tracked in [NATIVE_PLAN.md](NATIVE_PLAN.md).
+That plan owns the native experience and distribution acceptance; this document
+retains the authentication milestones and their recorded validation limits.
 
 ## Open decisions and ownership
 

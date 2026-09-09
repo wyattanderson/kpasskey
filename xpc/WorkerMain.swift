@@ -46,8 +46,11 @@ struct WorkerMain {
     // Worker.xpc is always nested directly in its owning application's XPCServices directory.
     let host = Bundle.main.bundleURL.deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
+    guard let identifier = Bundle(url: host)?.bundleIdentifier,
+      [hostIdentifier, applicationIdentifier].contains(identifier)
+    else { throw PeerPolicyError.invalidIdentity }
     let delegate = try ListenerDelegate(
-      requirement: PeerPolicy.requirement(peer: host, identifier: hostIdentifier))
+      requirement: PeerPolicy.requirement(peer: host, identifier: identifier))
     let listener = NSXPCListener.service()
     listener.delegate = delegate
     withExtendedLifetime(delegate) { listener.resume() }

@@ -105,7 +105,13 @@ private final class Callbacks {
         #expect(output?[1] == nil)
         let item = try #require(output?.pointee)
         #expect(item.pointee.pa_type == 153)
-        #expect(Data(bytes: item.pointee.contents, count: Int(item.pointee.length)) == reply)
+        let bytes = Data(bytes: item.pointee.contents, count: Int(item.pointee.length))
+        let actual = try decodeWire(bytes, as: Assertion.self, phase: 2)
+        #expect(actual.state.utf8.elementsEqual(replyState.utf8))
+        // JSON object key order is not part of the protocol.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(try encoder.encode(actual.data) == encoder.encode(fixtureAssertion()))
       } else { #expect(output == nil) }
     }
     // A prefix match is insufficient: the request's realm must match in full.

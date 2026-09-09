@@ -2,8 +2,13 @@
 
 The host owns presentation and effective settings. The embedded, unprivileged
 XPC worker owns MIT contexts, blocking authentication, temporary secrets and
-credential publication. The console and future UI share the main-actor
-`WorkerClient`; neither calls Kerberos directly. No global Mach service,
+credential publication. The console and native UI share the main-actor
+`WorkerClient` and observable `Authentication` presentation adapter; neither
+calls Kerberos directly. The presentation adapter owns the active operation,
+prompt consumption, response validation, cancellation intent and terminal result.
+Passwords and PINs are passed directly for one response, never stored in its
+observable state. The native app retains only metadata for the last ticket it
+published; it does not yet query the live cache collection. No global Mach service,
 launch agent, root helper or shell authentication subprocess is installed.
 `XPCService.JoinExistingSession` is explicitly true: GSSCred partitions caches
 by audit session, so a separate worker session would hide its tickets from
@@ -13,7 +18,7 @@ not custom credential-daemon IPC.
 
 ```mermaid
 flowchart LR
-    H[Console or future native UI] <-->|NSXPCConnection| W[Embedded Swift worker]
+    H[Console or native UI] <-->|NSXPCConnection| W[Embedded Swift worker]
     W --> K[Bundled MIT krb5]
     K <-->|DNS and Kerberos| D[KDC]
     K --> M[Private MEMORY staging cache]
@@ -156,6 +161,12 @@ supplied in a message or PID lookup establishes trust. The listener also
 requires the connecting effective UID to equal its own. Service listeners do
 not support the listener-wide requirement API, so enforcement is installed
 on each accepted connection before exported methods execute.
+
+The native app and harness have separate, explicitly allowed host/service
+identifiers. Each bundles the same worker implementation under its own service
+identifier. The worker reads its enclosing bundle's identifier, checks it against
+the fixed host allow-list and constructs the signing requirement for that exact
+host. Bundle metadata alone never authorizes a connection.
 
 Release/default builds require an Apple-anchored peer with the expected signing
 identifier and the same Team ID as the running endpoint. The Team ID comes

@@ -60,44 +60,50 @@ func readPassword(until deadline: ContinuousClock.Instant, terminal: Int32? = ni
 
 @MainActor
 func passwordConsole(_ client: WorkerClient, settings: Configuration) async throws {
-  var terminal: Message?
-  var prompt: Message?
+  let authentication = Authentication(client: client)
   var input: Task<Data?, any Error>?
   defer { input?.cancel() }
-  client.onEvent = { event in
-    if event.kind == "interaction" { prompt = event }
-    if event.kind == "terminal" { terminal = event; input?.cancel() }
-    print("\(event.kind) \(event.value)")
-  }
-  let operation = UUID().uuidString
-  let ack = try await client.start(Snapshot(configuration: settings), operation: operation)
-  guard ack.value == "ok" else { throw ClientFailure(status: Status(rawValue: ack.value) ?? .protocolViolation) }
-  while terminal == nil {
-    guard let current = prompt else { try await Task.sleep(for: .milliseconds(10)); continue }
-    prompt = nil
+  await authentication.start(settings)
+  var lastMessage = ""
+  while authentication.isRunning {
+    if authentication.message != lastMessage {
+      lastMessage = authentication.message
+      print(lastMessage)
+    }
+    guard let current = authentication.prompt else { try await Task.sleep(for: .milliseconds(10)); continue }
     let deadline = ContinuousClock.now.advanced(by: .milliseconds(current.remainingMilliseconds))
     let label: String
     if current.value == "selectDevice" {
       for choice in current.choices { print(choice) }
       label = "Key number"
-    } else { label = current.value == "pin" ? "Security key PIN" : "Password" }
+    } else { label = Authentication.promptLabel(current) }
     let read = Task.detached { try readPassword(until: deadline, label: label) }
     input = read
+    let stopRead = Task {
+      while authentication.isRunning && !Task.isCancelled {
+        do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
+      }
+      read.cancel()
+    }
+    defer { stopRead.cancel() }
     var secret = try await read.value
     input = nil
     defer { if secret != nil { secret!.resetBytes(in: 0..<secret!.count) } }
-    if let password = secret, terminal == nil {
+    if let password = secret, authentication.isRunning {
       if current.value == "selectDevice" {
         guard let text = String(data: password, encoding: .utf8), let number = Int(text),
           (1...current.choices.count).contains(number) else {
-          _ = try await client.cancel(operation)
+          await authentication.cancel()
           continue
         }
-        _ = try await client.respond(to: current, value: "device-\(number - 1)")
-      } else { _ = try await client.respond(to: current, password: password) }
-    } else { _ = try await client.cancel(operation) }
+        await authentication.respond(to: current, device: number - 1)
+      } else if Authentication.validSecret(password, for: current) {
+        await authentication.respond(to: current, secret: password)
+      } else { await authentication.cancel() }
+    } else { await authentication.cancel() }
   }
-  guard let terminal else { return }
+  guard let terminal = authentication.terminal else { throw ClientFailure(status: .configurationInvalid) }
+  print("terminal \(terminal.value)")
   if let ticket = terminal.ticket {
     print("principal \(ticket.principal)")
     print("cache \(ticket.cache)")

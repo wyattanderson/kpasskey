@@ -6,7 +6,7 @@ public enum PeerPolicyError: Error { case invalidCode, missingTeam, invalidIdent
 public enum PeerPolicy {
   /// XPC evaluates this requirement against the actual peer, on every message.
   public static func requirement(peer: URL, identifier: String) throws -> String {
-    guard [hostIdentifier, workerIdentifier].contains(identifier) else {
+    guard [hostIdentifier, applicationIdentifier, workerIdentifier, applicationWorkerIdentifier].contains(identifier) else {
       throw PeerPolicyError.invalidIdentity
     }
     var ownCode: SecCode?
@@ -51,7 +51,7 @@ public enum PeerPolicy {
 
   public static func releaseRequirement(team: String, identifier: String) throws -> String {
     guard team.count == 10, team.allSatisfy({ $0.isASCII && ($0.isUppercase || $0.isNumber) }),
-      [hostIdentifier, workerIdentifier].contains(identifier)
+      [hostIdentifier, applicationIdentifier, workerIdentifier, applicationWorkerIdentifier].contains(identifier)
     else { throw PeerPolicyError.invalidIdentity }
     return
       "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"\(team)\""

@@ -1,0 +1,42 @@
+load("@rules_apple//apple:macos.bzl", "macos_application", "macos_xpc_service")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
+
+package(default_visibility = ["//visibility:public"])
+
+swift_library(
+    name = "main",
+    srcs = ["KPasskeyApp.swift", "Preferences.swift"],
+    copts = ["-parse-as-library"],
+    deps = ["//xpc:client", "//xpc:contract"],
+)
+
+macos_xpc_service(
+    name = "worker_service",
+    bundle_name = "Worker",
+    bundle_id = "org.kpasskey.KPasskey.worker",
+    infoplists = ["//xpc:Worker.plist"],
+    minimum_os_version = "14.0",
+    deps = ["//xpc:worker_main"],
+)
+
+macos_application(
+    name = "KPasskey",
+    bundle_name = "KPasskey",
+    bundle_id = "org.kpasskey.KPasskey",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    xpc_services = [":worker_service"],
+    additional_contents = {
+        "//passkey:kpasskey": "PlugIns",
+        "//xpc:pkinit_plugin": "PlugIns",
+    },
+    deps = [":main", "//third_party:krb5"],
+)
+
+swift_test(
+    name = "preferences_tests",
+    size = "small",
+    srcs = ["Preferences.swift", "PreferencesTests.swift"],
+    deps = ["//xpc:contract"],
+)
