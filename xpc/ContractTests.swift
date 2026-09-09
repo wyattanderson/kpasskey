@@ -41,7 +41,7 @@ import Testing
 @Test(arguments: [true, false]) @MainActor
 func cancellationCompletionRace(cancelFirst: Bool) async throws {
   var events: [Message] = []
-  let session = FakeSession { events.append($0) }
+  let session = WorkerSession { events.append($0) }
   _ = session.handle(Message("negotiate"))
   let id = UUID().uuidString
   _ = session.handle(Message("start", operation: id, snapshot: Snapshot(timeoutMilliseconds: 200)))
@@ -61,11 +61,11 @@ func cancellationCompletionRace(cancelFirst: Bool) async throws {
 
 @Test @MainActor func workerLifecycle() async throws {
   var events: [Message] = []
-  let session = FakeSession { events.append($0) }
+  let session = WorkerSession { events.append($0) }
   let id = UUID().uuidString
   let start = Message("start", operation: id, snapshot: Snapshot(timeoutMilliseconds: 200))
   #expect(session.handle(start).value == "protocolViolation")
-  #expect(session.handle(Message("negotiate", version: 2)).value == "unsupportedVersion")
+  #expect(session.handle(Message("negotiate", version: 1)).value == "unsupportedVersion")
   #expect(session.handle(Message("negotiate")).kind == "negotiated")
   #expect(session.handle(start).value == "ok")
   #expect(session.handle(start).value == "busy")

@@ -5,6 +5,11 @@ filegroup(
 )
 
 test_suite(
+    name = "milestone3",
+    tests = ["//xpc:kerberos_tests", "//xpc:console_tests", "//xpc:contract_tests", "//tests:xpc_integration"],
+)
+
+test_suite(
     name = "milestone2",
     tests = ["//xpc:contract_tests", "//tests:xpc_integration"],
 )

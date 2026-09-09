@@ -10,7 +10,7 @@ config_setting(name = "development_peers", define_values = {"kpasskey_developmen
 swift_library(
     name = "contract",
     module_name = "KPasskeyContract",
-    srcs = ["Contract.swift", "PeerPolicy.swift"],
+    srcs = ["Contract.swift", "Configuration.swift", "PeerPolicy.swift"],
     defines = select({":development_peers": ["DEVELOPMENT_PEERS"], "//conditions:default": []}),
 )
 
@@ -24,8 +24,8 @@ swift_library(
 swift_library(
     name = "worker",
     module_name = "KPasskeyWorker",
-    srcs = ["FakeSession.swift"],
-    deps = [":contract"],
+    srcs = ["Session.swift", "Kerberos.swift"],
+    deps = [":contract", "//third_party:krb5_swift"],
 )
 
 swift_library(
@@ -46,7 +46,7 @@ macos_xpc_service(
 
 swift_library(
     name = "harness_main",
-    srcs = ["HarnessMain.swift"],
+    srcs = ["HarnessMain.swift", "PasswordConsole.swift"],
     copts = ["-parse-as-library"],
     deps = [":client", ":contract"],
 )
@@ -58,7 +58,27 @@ macos_application(
     infoplists = ["Host.plist"],
     minimum_os_version = "14.0",
     xpc_services = [":worker_service"],
-    deps = [":harness_main"],
+    deps = [":harness_main", "//third_party:krb5"],
+)
+
+swift_test(
+    name = "console_tests",
+    size = "small",
+    srcs = ["PasswordConsole.swift", "PasswordConsoleTests.swift"],
+    deps = [":client", ":contract"],
+)
+
+swift_test(
+    name = "kerberos_tests",
+    size = "small",
+    srcs = ["KerberosTests.swift"],
+    env = {
+        "KRB5_CONFIG": "$(rootpath :Conflicting.conf)",
+        "KRB5CCNAME": "FILE:/intentionally/conflicting/cache",
+        "KRB5_TRACE": "/intentionally/conflicting/trace",
+    },
+    data = [":Conflicting.conf"],
+    deps = [":contract", ":worker", "//third_party:krb5_swift"],
 )
 
 swift_test(

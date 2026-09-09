@@ -1,7 +1,8 @@
 # KPasskey project plan
 
-Status: milestones 1 and 2 implemented and tested on arm64 macOS.
-Milestones 3 onward remain pending; no authentication is implemented.
+Status: milestones 1–3 implemented on arm64 macOS, including live password
+authentication and use of the published TGT by Apple's system Kerberos tools.
+Milestone 4 onward remains pending; no passkey authentication is implemented.
 Decisions recorded: 2026-09-05.
 
 ## Objective and scope
@@ -215,36 +216,74 @@ KPasskey passkey plugin loaded or used.
 
 Deliverables:
 
-- [ ] Implement the typed, versioned configuration model in docs/CONFIGURATION.md.
-- [ ] Translate settings into a non-default in-memory MIT profile and explicit
+- [x] Implement the typed, versioned configuration model in docs/CONFIGURATION.md.
+- [x] Translate settings into a non-default in-memory MIT profile and explicit
   credential options. Prove all required profile lookup, copy, and iteration
   behavior for the selected MIT version.
-- [ ] Create a context for each operation, isolate configuration/environment
+- [x] Create a context for each operation, isolate configuration/environment
   behavior, and establish a policy for DNS discovery and canonicalization.
-- [ ] Implement password interactions through XPC using the same harness.
+- [x] Implement password interactions through XPC using the same harness.
   Also define how unexpected additional prompts are rejected or represented.
-- [ ] Acquire credentials into a private staging cache, then publish successfully
+- [x] Acquire credentials into a private staging cache, then publish successfully
   acquired credentials to the selected shared macOS cache through library APIs.
-- [ ] Implement metadata reporting and explicit, scoped cache selection.
+- [x] Implement metadata reporting and explicit, scoped cache selection.
   Do not overwrite or destroy unrelated credentials on failure.
-- [ ] Define timeout, cancellation, error mapping, and cleanup for blocking
+- [x] Define timeout, cancellation, error mapping, and cleanup for blocking
   Kerberos calls. Audit every cache/backend environment dependency separately.
 
 Acceptance:
 
-- [ ] A configured harness obtains a password-based TGT visible to the selected
+- [x] A configured harness obtains a password-based TGT visible to the selected
   system `klist` and at least one real system Kerberos consumer.
-- [ ] No external `krb5.conf`, shell variables, or modifications to `/etc` are
+- [x] No external `krb5.conf`, shell variables, or modifications to `/etc` are
   required. An intentionally conflicting environment/configuration cannot
   silently change the chosen realm, KDC policy, or cache destination.
-- [ ] Wrong password, unavailable KDC, invalid realm, cancellation, expired
+- [x] Wrong password, unavailable KDC, invalid realm, cancellation, expired
   interaction, and sequential operations with different settings are tested.
-- [ ] Credentials are not reported as available until publication succeeds;
+- [x] Credentials are not reported as available until publication succeeds;
   authentication success and cache-publication failure remain distinguishable.
-- [ ] Passwords are absent from command lines, configuration plists, normal
+- [x] Passwords are absent from command lines, configuration plists, normal
   logging, crash annotations, and test output. The harness reads them securely.
-- [ ] The worker works after bundle relocation and still uses the bundled MIT
+- [x] The worker works after bundle relocation and still uses the bundled MIT
   implementation, not Apple's different Kerberos ABI by accident.
+
+### Implementation evidence and validation limits
+
+- `xpc/Configuration.swift` defines effective settings and partial plist loading.
+  DNS discovery is on by default; explicit endpoints disable DNS KDC discovery.
+  Forwardability defaults on and is configurable, as are ticket lifetimes,
+  canonicalization, transport preference, default-cache switching and deadlines.
+- MIT's existing native memory-only profile provides lookup, copy and iteration;
+  a custom vtable is unnecessary. Swift tests exercise copied-profile lifetime,
+  repeated relations, missing keys, section iteration and explicit credential
+  options with conflicting configuration/cache/trace environment settings.
+  An opt-in, password-free test also resolved the live realm through MIT's DNS
+  TXT lookup for an unqualified username and supplied discovery domain.
+- Protocol version 2 retains scripted boundary tests and adds a separate bounded
+  password field and validated success metadata. Native work is off the main
+  actor. Cancellation gates publication; a blocked unpublished operation causes
+  worker exit after its cleanup grace. Native cache-commit reply loss remains
+  an indeterminate outcome, documented in CONFIGURATION.md.
+- A private MEMORY cache stages credentials. Successful publication creates a
+  distinct API cache; rollback owns only that new cache. Tests exercise rollback
+  and survival of an unrelated memory cache without modifying a user's cache
+  collection. The client rejects password success without publication metadata.
+- Live password authentication used DNS KDC discovery, produced a forwardable
+  TGT, and survived host/worker exit. Apple's `/usr/bin/klist` displayed it and
+  `/usr/bin/kgetcred` used it to obtain a host service ticket. The worker must
+  set `JoinExistingSession`: the initial isolated XPC audit session hid its
+  caches from the user's terminal. This setting has a bundle regression check.
+- A pseudo-terminal regression covers hidden input, backspace, timeout and
+  terminal restoration. Password-rejection testing uses a synthetic local KDC
+  returning PREAUTH_FAILED, avoiding real-account lockout attempts. Other tests
+  cover unavailable endpoints, invalid settings/realms, stale/expired responses,
+  cancellation, and sequential realm snapshots through relocated XPC bundles.
+- Full development and default-policy Bazel suites retain dependency, linkage,
+  relocation and peer-signature checks. The system HTTPS consumer attempt stopped
+  at the lab CA trust chain; TLS verification was not disabled. Live testing of
+  nonforwardable tickets and forced native API-cache failure remains additional
+  deployment coverage; the option and rollback paths have automated coverage.
+  Oldest-OS and Developer ID distribution checks remain release work.
 
 ## Milestone 4 — Purpose-built passkey plugin
 
@@ -308,9 +347,9 @@ versions on GitHub Releases. Test every architecture actually advertised.
 | MIT/libfido2 crypto dependencies | M1 resolved | Bundle OpenSSL; compatibility rationale lives beside its pin in MODULE.bazel |
 | Static versus dynamic third-party linkage | M1 resolved | Shared MIT/OpenSSL; static libfido2/libcbor/zlib; one MIT runtime |
 | JSON library | M4 | Deferred until the passkey wire parser is needed; use an established parser |
-| Shared-cache backend support and visibility | M1/M3 | Revalidate existing MIT-to-macOS path |
+| Shared-cache backend support and visibility | M3 resolved | Unique API cache in the caller's audit session; live Apple klist/kgetcred validated |
 | XPC DTOs, service identity, console hosting | M2 resolved | Secure Swift envelopes; verified peer signing; embedded unprivileged service and console host |
-| Profile backend completeness and discovery | M3 | Immutable in-memory profile plus explicit options |
+| Profile backend completeness and discovery | M3 resolved | Native memory-only MIT profile, explicit options, DNS realm/KDC discovery |
 | FreeIPA version test matrix | M4 | Start with the working deployment, record exact versions |
 | New-code license and dependency provenance | Before distribution | Track origin from first commit; no automatic relicensing of copied code |
 

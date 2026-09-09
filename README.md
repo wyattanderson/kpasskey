@@ -15,7 +15,10 @@ Milestone 1 implements arm64 macOS dependency builds with Bazel, Swift probes
 and Swift Testing, signed `rules_apple` command-line applications, PKINIT
 loading, linkage checks, and relocation tests. Milestone 2 adds shared Swift XPC
 contracts, a client adapter, an embedded fake worker, and a console host app with
-lifecycle and peer-identity tests. No passkey plugin, UI, or authentication is
+lifecycle and peer-identity tests. Milestone 3 adds password authentication,
+automatic DNS realm/KDC discovery, configurable forwardable tickets and shared
+macOS cache publication, validated live with Apple's `klist` and `kgetcred`.
+Validation details are in PLAN.md. No passkey plugin or graphical UI is
 implemented yet.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
@@ -67,8 +70,7 @@ packages will be created in later milestones:
 
 ```text
 app/             SwiftUI/AppKit menu-bar application (later)
-xpc/             Shared contracts/client, fake worker, console host, unit tests
-kerberos/        MIT krb5 wrapper, profile backend, and cache operations
+xpc/             Contracts/client, password worker, MIT adapter, console, unit tests
 plugin/          Purpose-built PA-REDHAT-PASSKEY adapter
 fido/            libfido2 device and assertion adapter
 third_party/     External repository metadata, BUILD overlays, patches

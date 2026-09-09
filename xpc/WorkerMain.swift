@@ -18,7 +18,7 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
     nonisolated(unsafe) let accepted = connection
     Task { @MainActor in
       let connection = accepted
-      let session = FakeSession { [weak connection] event in
+      let session = WorkerSession(terminateBlockedWorker: { _exit(0) }) { [weak connection] event in
         (connection?.remoteObjectProxyWithErrorHandler { @Sendable _ in } as? ClientProtocol)?
           .receive(event)
       }
@@ -37,6 +37,12 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 @main
 struct WorkerMain {
   static func main() throws {
+    // Sanitize once before threads or dependent libraries run; never mutate per operation.
+    for key in ["KRB5_CONFIG", "KRB5_KDC_PROFILE", "KRB5CCNAME", "KRB5_TRACE", "KRB5_KTNAME",
+                "KRB5_CLIENT_KTNAME", "OPENSSL_CONF", "OPENSSL_CONF_INCLUDE", "OPENSSL_MODULES",
+                "OPENSSL_ENGINES", "RANDFILE", "LOCALDOMAIN", "RES_OPTIONS", "HOSTALIASES"] {
+      unsetenv(key)
+    }
     // Worker.xpc is always nested directly in its owning application's XPCServices directory.
     let host = Bundle.main.bundleURL.deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()

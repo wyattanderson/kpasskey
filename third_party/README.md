@@ -40,6 +40,12 @@ languages under the policy in [AGENTS.md](../AGENTS.md).
   override, leaving recursive dependency ordering intact. Build `util`,
   `include`, `lib`, and stock PKINIT; omit server/CLI/test traversal. Remove if
   upstream offers a client-library-only build target with PKINIT.
+  It also empties the legacy KDC locator's plugin-directory list. That loader
+  ignores the application profile's plugin policy and has no public disabling
+  API accessible from Swift. This upstream-only hardening patch prevents host
+  locator plugins from overriding explicit KDC/DNS settings; no application
+  logic or interoperability shim is written in C. Remove it if upstream exposes
+  a supported per-context locator policy.
 
 The libfido2 target undefines Bazel's `_FORTIFY_SOURCE` before upstream sets
 its own value, preserving upstream's warnings-as-errors policy. The CMake

@@ -1,3 +1,4 @@
+diff --git a/src/Makefile.in b/src/Makefile.in
 --- a/src/Makefile.in
 +++ b/src/Makefile.in
 @@ -32,6 +32,10 @@
@@ -11,3 +12,18 @@
  WINSUBDIRS=include util lib ccapi windows clients appl plugins\preauth\spake \
  	$(PKINIT_SUBDIR)
  BUILDTOP=$(REL).
+diff --git a/src/lib/krb5/os/locate_kdc.c b/src/lib/krb5/os/locate_kdc.c
+--- a/src/lib/krb5/os/locate_kdc.c
++++ b/src/lib/krb5/os/locate_kdc.c
+@@ -401,7 +401,4 @@
+-#if TARGET_OS_MAC
+-static const char *objdirs[] = { KRB5_PLUGIN_BUNDLE_DIR,
+-                                 LIBDIR "/krb5/plugins/libkrb5",
+-                                 NULL }; /* should be a list */
+-#else
+-static const char *objdirs[] = { LIBDIR "/krb5/plugins/libkrb5", NULL };
+-#endif
++/* KPasskey uses application-owned profiles and DNS. This legacy loader has
++ * no public API/profile switch and otherwise scans host plugin directories.
++ * Do not allow installed locator modules to override the operation snapshot. */
++static const char *objdirs[] = { NULL };

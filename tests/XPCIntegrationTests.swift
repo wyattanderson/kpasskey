@@ -12,6 +12,10 @@ import Testing
   let original = root.appendingPathComponent("KPasskeyHarness.app")
   let hostPath = "Contents/MacOS/KPasskeyHarness"
   let workerPath = "Contents/XPCServices/Worker.xpc/Contents/MacOS/Worker"
+  let workerInfo = try PropertyListSerialization.propertyList(from: Data(contentsOf:
+    original.appendingPathComponent("Contents/XPCServices/Worker.xpc/Contents/Info.plist")), format: nil)
+    as? [String: Any]
+  #expect((workerInfo?["XPCService"] as? [String: Any])?["JoinExistingSession"] as? Bool == true)
   try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", original.path])
   if try environment("KPASSKEY_DEVELOPMENT") != "true" {
     // Default/release compilation has no ad-hoc identity fallback.
@@ -35,6 +39,9 @@ import Testing
       try dependencies(of: moved.appendingPathComponent(path)).allSatisfy {
         $0.hasPrefix("/usr/lib/") || $0.hasPrefix("/System/Library/")
           || $0.hasPrefix("@rpath/libswift")
+          || ["libkrb5.3.3.dylib", "libk5crypto.3.1.dylib", "libcom_err.3.0.dylib",
+              "libkrb5support.1.1.dylib", "libgssapi_krb5.2.2.dylib", "libcrypto.3.dylib",
+              "libssl.3.dylib"].contains(String($0.dropFirst("@rpath/".count)))
       })
   }
   let output = try run(
@@ -53,6 +60,7 @@ import Testing
     "deadline": "deadlineExceeded", "disconnect": "disconnected", "kill": "workerLost",
     "reconnect": "ok",
     "invalidArchive": "workerLost", "afterInvalidArchive": "ok",
+    "password-FIRST.INVALID": "kdcUnavailable", "password-SECOND.INVALID": "kdcUnavailable",
   ]
   for (label, status) in expected {
     let start = try #require(lines.first { $0.count == 4 && $0[0] == "start" && $0[1] == label })
@@ -68,7 +76,7 @@ import Testing
     "/usr/bin/codesign",
     [
       "--force", "--sign", "-", "--identifier", "org.kpasskey.harness",
-      "--options", "runtime", imposter.path,
+      "--requirements", "=designated => identifier \"org.kpasskey.harness\" and true", imposter.path,
     ])
   do {
     try run(imposter.path, ["--automatic"], environment: [:])

@@ -1,7 +1,10 @@
 import Foundation
 import KPasskeyContract
 
-public struct ClientFailure: Error, Sendable { public let status: Status }
+public struct ClientFailure: Error, Sendable {
+  public let status: Status
+  public init(status: Status) { self.status = status }
+}
 
 private final class EventSink: NSObject, ClientProtocol, Sendable {
   let deliver: @Sendable (Message) -> Void
@@ -18,7 +21,7 @@ public final class WorkerClient {
   private var generation = UUID()
   private var ready = false
   private var pending: [UUID: CheckedContinuation<Message, any Error>] = [:]
-  private var operations: [String: Int] = [:]
+  private var operations: [String: (sequence: Int, password: Bool)] = [:]
   private var deadlines: [String: Task<Void, Never>] = [:]
 
   public init() {}
@@ -52,7 +55,7 @@ public final class WorkerClient {
     // launchd throttles a service restart after a crash; negotiation allows that delay.
     let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
     guard generation == token else { throw ClientFailure(status: .disconnected) }
-    guard reply.kind == "negotiated", reply.version == 1, reply.value == "fake",
+    guard reply.kind == "negotiated", reply.version == 2, reply.value == "fake,password",
       reply.sequence > 0, reply.sequence <= Int(Int32.max), reply.sequence != Int(getpid())
     else {
       close(.protocolViolation)
@@ -72,7 +75,7 @@ public final class WorkerClient {
     let tracking = operations[operation] == nil
     let token = generation
     if tracking {
-      operations[operation] = 0
+      operations[operation] = (0, snapshot.configuration != nil)
       armDeadline(operation, milliseconds: snapshot.timeoutMilliseconds + 1_000)
     }
     do {
@@ -90,6 +93,11 @@ public final class WorkerClient {
       Message(
         "respond", operation: event.operation,
         interaction: event.interaction, value: value))
+  }
+
+  public func respond(to event: Message, password: Data) async throws -> Message {
+    try await exchange(Message("respond", operation: event.operation,
+      interaction: event.interaction, secret: password))
   }
 
   public func cancel(_ operation: String) async throws -> Message {
@@ -121,7 +129,8 @@ public final class WorkerClient {
       proxy.exchange(message) { [weak self] reply in
         Task { @MainActor in
           guard let self, self.generation == token else { return }
-          guard reply.bounded, reply.version == 1,
+          guard reply.bounded, reply.version == 2, reply.secret == nil, reply.ticket == nil,
+            reply.errorCode == 0,
             reply.operation == message.operation, reply.interaction.isEmpty,
             reply.snapshot == nil, reply.remainingMilliseconds == 0,
             (reply.kind == "negotiated" && message.kind == "negotiate")
@@ -149,12 +158,15 @@ public final class WorkerClient {
   }
 
   private func receive(_ event: Message) {
-    guard let sequence = operations[event.operation] else { return }
-    guard event.bounded, event.version == 1, event.snapshot == nil,
-      event.sequence == sequence + 1,
-      (event.kind == "progress" && event.value == "started" && event.interaction.isEmpty
+    guard let operation = operations[event.operation] else { return }
+    guard event.bounded, event.version == 2, event.snapshot == nil, event.secret == nil,
+      (event.kind == "terminal" || (event.ticket == nil && event.errorCode == 0)),
+      (event.ticket == nil || (event.kind == "terminal" && event.value == "ok")),
+      (event.kind != "terminal" || event.value != "ok" || (event.ticket != nil) == operation.password),
+      event.sequence == operation.sequence + 1,
+      (event.kind == "progress" && ["started", "authenticating"].contains(event.value) && event.interaction.isEmpty
         && event.remainingMilliseconds == 0)
-        || (event.kind == "interaction" && ["selectKey", "touch"].contains(event.value)
+        || (event.kind == "interaction" && ["selectKey", "touch", "password"].contains(event.value)
           && UUID(uuidString: event.interaction)?.uuidString == event.interaction)
         || (event.kind == "terminal" && Status(rawValue: event.value) != nil
           && event.interaction.isEmpty
@@ -163,7 +175,7 @@ public final class WorkerClient {
       close(.protocolViolation)
       return
     }
-    operations[event.operation] = event.sequence
+    operations[event.operation] = (event.sequence, operation.password)
     if event.kind == "terminal" { forget(event.operation) }
     onEvent(event)
   }
@@ -189,9 +201,9 @@ public final class WorkerClient {
     operations.removeAll()
     for task in deadlines.values { task.cancel() }
     deadlines.removeAll()
-    for (operation, sequence) in active {
+    for (operation, state) in active {
       onEvent(
-        Message("terminal", operation: operation, value: status.rawValue, sequence: sequence + 1))
+        Message("terminal", operation: operation, value: status.rawValue, sequence: state.sequence + 1))
     }
   }
 }

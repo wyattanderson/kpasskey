@@ -6,9 +6,11 @@ public let hostIdentifier = "org.kpasskey.harness"
 public enum Status: String, Sendable {
   case ok, protocolViolation, unsupportedVersion, busy, staleInteraction
   case cancelled, deadlineExceeded, workerLost, disconnected, scriptedFailure
+  case configurationInvalid, kdcUnavailable, credentialsRejected, unexpectedPrompt
+  case authenticationFailed, publicationFailed
 }
 
-/// M2-only immutable configuration. Real Kerberos settings belong to M3.
+/// Immutable per-operation snapshot; configuration selects real password authentication.
 @objc(KPasskeySnapshot)
 public final class Snapshot: NSObject, NSSecureCoding, Sendable {
   public static var supportsSecureCoding: Bool { true }
@@ -17,20 +19,23 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
   public let realm: String
   public let outcome: String
   public let timeoutMilliseconds: Int
+  public let configuration: Configuration?
 
   public init(
     schema: Int = 1, principal: String = "demo", realm: String = "EXAMPLE.INVALID",
-    outcome: String = "success", timeoutMilliseconds: Int = 10_000
+    outcome: String = "success", timeoutMilliseconds: Int = 10_000,
+    configuration: Configuration? = nil
   ) {
     self.schema = schema
     self.principal = principal
     self.realm = realm
     self.outcome = outcome
-    self.timeoutMilliseconds = timeoutMilliseconds
+    self.timeoutMilliseconds = configuration?.timeoutMilliseconds ?? timeoutMilliseconds
+    self.configuration = configuration
   }
 
   public var valid: Bool {
-    schema == 1 && !principal.isEmpty && !realm.isEmpty
+    schema == 1 && (configuration?.valid ?? true) && !principal.isEmpty && !realm.isEmpty
       && principal.utf8.count <= 256 && realm.utf8.count <= 256
       && ["success", "failure"].contains(outcome)
       && (200...30_000).contains(timeoutMilliseconds)
@@ -43,9 +48,18 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
       let realm = coder.decodeObject(of: NSString.self, forKey: "realm") as String?,
       let outcome = coder.decodeObject(of: NSString.self, forKey: "outcome") as String?
     else { return nil }
+    var configuration: Configuration?
+    if coder.containsValue(forKey: "configuration") {
+      guard let bytes = coder.decodeObject(of: NSData.self, forKey: "configuration") as Data?,
+        bytes.count <= 8192,
+        let decoded = try? PropertyListDecoder().decode(Configuration.self, from: bytes), decoded.valid
+      else { return nil }
+      configuration = decoded
+    }
     self.init(
       schema: coder.decodeInteger(forKey: "schema"), principal: principal, realm: realm,
-      outcome: outcome, timeoutMilliseconds: coder.decodeInteger(forKey: "timeout"))
+      outcome: outcome, timeoutMilliseconds: coder.decodeInteger(forKey: "timeout"),
+      configuration: configuration)
     guard valid else { return nil }
   }
 
@@ -55,6 +69,9 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
     coder.encode(realm as NSString, forKey: "realm")
     coder.encode(outcome as NSString, forKey: "outcome")
     coder.encode(timeoutMilliseconds, forKey: "timeout")
+    if let configuration {
+      coder.encode(try! PropertyListEncoder().encode(configuration) as NSData, forKey: "configuration")
+    }
   }
 }
 
@@ -70,11 +87,15 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
   public let sequence: Int
   public let remainingMilliseconds: Int
   public let snapshot: Snapshot?
+  public let secret: Data?
+  public let ticket: TicketMetadata?
+  public let errorCode: Int32
 
   public init(
-    _ kind: String, version: Int = 1, operation: String = "",
+    _ kind: String, version: Int = 2, operation: String = "",
     interaction: String = "", value: String = "", sequence: Int = 0,
-    snapshot: Snapshot? = nil, remainingMilliseconds: Int = 0
+    snapshot: Snapshot? = nil, remainingMilliseconds: Int = 0,
+    secret: Data? = nil, ticket: TicketMetadata? = nil, errorCode: Int32 = 0
   ) {
     self.kind = kind
     self.version = version
@@ -84,16 +105,22 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     self.sequence = sequence
     self.snapshot = snapshot
     self.remainingMilliseconds = remainingMilliseconds
+    self.secret = secret
+    self.ticket = ticket
+    self.errorCode = errorCode
   }
 
   public var bounded: Bool {
     kind.utf8.count <= 32 && operation.utf8.count <= 36 && interaction.utf8.count <= 36
       && value.utf8.count <= 256 && sequence >= 0 && (0...30_000).contains(remainingMilliseconds)
       && (snapshot?.valid ?? true)
+      && (secret.map { !$0.isEmpty && $0.count <= 4096 && !$0.contains(0) } ?? true)
+      && (ticket?.valid ?? true)
   }
 
   public var validCommand: Bool {
-    guard bounded, sequence == 0, remainingMilliseconds == 0 else { return false }
+    guard bounded, sequence == 0, remainingMilliseconds == 0, ticket == nil, errorCode == 0,
+      secret == nil || kind == "respond" else { return false }
     switch kind {
     case "negotiate":
       return operation.isEmpty && interaction.isEmpty && value.isEmpty && snapshot == nil
@@ -104,7 +131,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     case "respond":
       return UUID(uuidString: operation)?.uuidString == operation
         && UUID(uuidString: interaction)?.uuidString == interaction
-        && ["key-1", "continue"].contains(value) && snapshot == nil
+        && ((secret == nil && ["key-1", "continue"].contains(value))
+          || (secret != nil && value.isEmpty)) && snapshot == nil
     case "cancel":
       return UUID(uuidString: operation)?.uuidString == operation && interaction.isEmpty
         && value.isEmpty
@@ -119,11 +147,21 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       let interaction = coder.decodeObject(of: NSString.self, forKey: "interaction") as String?,
       let value = coder.decodeObject(of: NSString.self, forKey: "value") as String?
     else { return nil }
+    var ticket: TicketMetadata?
+    if coder.containsValue(forKey: "ticket") {
+      guard let bytes = coder.decodeObject(of: NSData.self, forKey: "ticket") as Data?,
+        bytes.count <= 4096,
+        let decoded = try? PropertyListDecoder().decode(TicketMetadata.self, from: bytes), decoded.valid
+      else { return nil }
+      ticket = decoded
+    }
     self.init(
       kind, version: coder.decodeInteger(forKey: "version"), operation: operation,
       interaction: interaction, value: value, sequence: coder.decodeInteger(forKey: "sequence"),
       snapshot: coder.decodeObject(of: Snapshot.self, forKey: "snapshot"),
-      remainingMilliseconds: coder.decodeInteger(forKey: "remainingMilliseconds"))
+      remainingMilliseconds: coder.decodeInteger(forKey: "remainingMilliseconds"),
+      secret: coder.decodeObject(of: NSData.self, forKey: "secret") as Data?, ticket: ticket,
+      errorCode: coder.decodeInt32(forKey: "errorCode"))
     guard bounded else { return nil }
   }
 
@@ -136,6 +174,9 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     coder.encode(sequence, forKey: "sequence")
     coder.encode(snapshot, forKey: "snapshot")
     coder.encode(remainingMilliseconds, forKey: "remainingMilliseconds")
+    coder.encode(secret as NSData?, forKey: "secret")
+    coder.encode(errorCode, forKey: "errorCode")
+    if let ticket { coder.encode(try! PropertyListEncoder().encode(ticket) as NSData, forKey: "ticket") }
   }
 }
 
@@ -149,7 +190,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
 
 public func workerInterface() -> NSXPCInterface {
   let interface = NSXPCInterface(with: WorkerProtocol.self)
-  let classes = NSSet(array: [Message.self, Snapshot.self, NSString.self]) as! Set<AnyHashable>
+  let classes = NSSet(array: [Message.self, Snapshot.self, NSString.self, NSData.self]) as! Set<AnyHashable>
   for reply in [false, true] {
     interface.setClasses(
       classes, for: #selector(WorkerProtocol.exchange(_:reply:)),
@@ -161,7 +202,7 @@ public func workerInterface() -> NSXPCInterface {
 public func clientInterface() -> NSXPCInterface {
   let interface = NSXPCInterface(with: ClientProtocol.self)
   interface.setClasses(
-    NSSet(array: [Message.self, NSString.self]) as! Set<AnyHashable>,
+    NSSet(array: [Message.self, NSString.self, NSData.self]) as! Set<AnyHashable>,
     for: #selector(ClientProtocol.receive(_:)), argumentIndex: 0, ofReply: false)
   return interface
 }

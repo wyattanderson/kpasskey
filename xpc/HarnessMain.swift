@@ -19,6 +19,16 @@ struct HarnessMain {
       try await client.connect()
       print("connected host=\(getpid()) worker=\(client.workerPID) uid=\(geteuid())")
 
+      let arguments = Array(CommandLine.arguments.dropFirst())
+      if arguments.first == "--password" || arguments.first == "--settings" {
+        guard arguments.count == 2 else { throw HarnessError.rejected }
+        let settings = arguments[0] == "--settings"
+          ? try Configuration.load(Data(contentsOf: URL(fileURLWithPath: arguments[1])))
+          : Configuration(principal: arguments[1])
+        try await passwordConsole(client, settings: settings)
+        return
+      }
+
       func wait(_ operation: String, kind: String, value: String? = nil) async throws -> Message {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while ContinuousClock.now < deadline {
@@ -108,7 +118,7 @@ struct HarnessMain {
         _ = try await wait(disconnected, kind: "terminal")
         try await client.connect()
         let killed = try await start("kill")
-        // Only the negotiated, signature-verified fake worker is terminated by this test mode.
+        // Only this negotiated, signature-verified worker is terminated by this test mode.
         guard kill(client.workerPID, SIGKILL) == 0 else { throw HarnessError.rejected }
         _ = try await wait(killed, kind: "terminal")
         try await client.connect()
@@ -124,6 +134,20 @@ struct HarnessMain {
         _ = try await wait(invalidArchive, kind: "terminal")
         try await client.connect()
         try await complete(try await start("afterInvalidArchive"), automatic: true)
+        for realm in ["FIRST.INVALID", "SECOND.INVALID"] {
+          var settings = Configuration(principal: "synthetic@" + realm)
+          settings.dnsDiscovery = false
+          settings.kdcs = [KDCEndpoint(host: "127.0.0.1", port: 1)]
+          settings.networkTimeoutSeconds = 1
+          let passwordID = try await start("password-" + realm,
+            snapshot: Snapshot(configuration: settings))
+          let prompt = try await wait(passwordID, kind: "interaction", value: "password")
+          _ = try await client.respond(to: prompt, password: Data("synthetic-only".utf8))
+          let terminal = try await wait(passwordID, kind: "terminal")
+          guard terminal.value == "kdcUnavailable", terminal.ticket == nil else {
+            throw HarnessError.rejected
+          }
+        }
         // Give any duplicate terminal callbacks a chance to arrive before the test inspects output.
         try await Task.sleep(for: .milliseconds(250))
         print("exercise complete")

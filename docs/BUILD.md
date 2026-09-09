@@ -2,8 +2,9 @@
 
 Milestone 1 builds dependencies and exercises Swift interoperability with C
 libraries, dynamic loading, linkage, and relocation through Swift Testing.
-Milestone 2 adds a signed console host and embedded scripted XPC worker. Neither
-milestone implements a UI, passkey plugin, or authentication.
+Milestone 2 adds a signed console host and embedded scripted XPC worker.
+Milestone 3 adds ordinary password authentication and shared-cache publication;
+live acceptance is tracked in PLAN.md. No graphical UI or passkey plugin exists.
 
 Following [AGENTS.md](../AGENTS.md), Swift and modern Swift tooling are required
 for project-owned implementation and executable tools, with Swift Testing required
@@ -104,10 +105,23 @@ ditto -x -k bazel-bin/xpc/harness.zip /tmp/kpasskey-console
 ```
 
 The fake prompts accept `key-1`, then `continue`, or `cancel`. `--automatic`
-answers those synthetic prompts; `--exercise` runs the failure/lifecycle
-scenarios and intentionally kills only the negotiated fake worker. No passwords,
-PINs, Kerberos operations, device access, launch agents, or privileged installation
-are involved. The host and worker link only platform libraries. `xpc/Host.plist`
+answers those synthetic prompts; `--exercise` runs failure/lifecycle scenarios,
+including password requests to unavailable synthetic KDCs, and intentionally
+kills only the negotiated worker. Real password mode is selected explicitly:
+
+```sh
+/tmp/kpasskey-console/KPasskeyHarness.app/Contents/MacOS/KPasskeyHarness --password user@REALM
+/tmp/kpasskey-console/KPasskeyHarness.app/Contents/MacOS/KPasskeyHarness --settings settings.plist
+```
+
+The password is read securely from the terminal, never arguments or a file.
+Settings support DNS realm/KDC discovery and default to forwardable tickets;
+see [CONFIGURATION.md](CONFIGURATION.md). Shared caches are touched only after
+successful real authentication. `//:milestone3` includes profile/options,
+publication rollback, secure-terminal and XPC tests. No device access, launch
+agent or privileged installation is involved. The host's native CcInfo bundling
+support places the declared MIT/OpenSSL dylibs in `Contents/Frameworks`; the
+worker's standard rules_apple rpath finds them there. `xpc/Host.plist`
 and `xpc/Worker.plist` provide the required bundle package types and application
 service/run-loop declarations; rules_apple supplies the executable/identifier
 and nesting. No post-build patching or re-signing is needed for relocation.
@@ -116,7 +130,7 @@ The development signing policy and its local-bundle trust assumption are in
 [ARCHITECTURE.md](ARCHITECTURE.md#peer-authorization). Release builds must omit
 the development flag and sign both endpoints with the release identity. Positive
 Developer ID acceptance and distribution validation remain later release work.
-Do not ship the fake harness as an authentication application.
+The console harness is a development tool, not the finished native application.
 
 ## Dependency closure and local labels
 
@@ -214,9 +228,10 @@ macOS, contacts `com.apple.GSSCred` using private dictionary keys such as
 `command`, `default`, and `kHEIMTypeKerberos`. The XPC service protocol is not
 a documented public Apple API. Upstream working code is evidence of a
 compatibility path, not a promise of Apple support. The backend also contains
-OS-version-specific behavior. M3 must test actual shared-cache publication
-and system consumers on the supported OS versions. M1 neither reads nor
-modifies the user's credential cache.
+OS-version-specific behavior. M3 validated shared-cache publication and Apple's
+system `klist`/`kgetcred` on the development Mac, with the worker joining the
+caller's audit session. Other supported OS versions remain deployment checks.
+M1's probes neither read nor modify the user's credential cache.
 
 Foreign outputs have canonical, versioned `@rpath` install IDs and sibling
 references, rewritten before Bazel publishes the outputs. Symlinks are skipped
@@ -227,7 +242,8 @@ for arm64 loading; Developer ID signing and notarization are later work.
 PKINIT remains a Mach-O bundle. Future bundles must provide matching framework
 rpaths and an explicit application-owned plugin path; Bazel runfiles are not
 product runtime paths. MIT's compiled configuration/plugin defaults are not
-product configuration. M3/M4 must supply isolated profiles and explicit paths.
+product configuration. M3 supplies isolated profiles and disables external
+preauthentication/locator modules; M4 must supply explicit bundled plugin paths.
 
 ## Verification targets
 
