@@ -1,6 +1,7 @@
 load("@rules_apple//apple:macos.bzl", "macos_application", "macos_xpc_service")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_test.bzl", "swift_test")
+load("//build:artifact.bzl", "pkinit_artifact")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -24,8 +25,8 @@ swift_library(
 swift_library(
     name = "worker",
     module_name = "KPasskeyWorker",
-    srcs = ["Session.swift", "Kerberos.swift"],
-    deps = [":contract", "//third_party:krb5_swift"],
+    srcs = ["Session.swift", "Kerberos.swift", "Passkey.swift", "FIDO.swift"],
+    deps = [":contract", "//third_party:krb5_swift", "//third_party:libfido2_swift", "//passkey:wire"],
 )
 
 swift_library(
@@ -58,7 +59,17 @@ macos_application(
     infoplists = ["Host.plist"],
     minimum_os_version = "14.0",
     xpc_services = [":worker_service"],
+    additional_contents = {"//passkey:kpasskey": "PlugIns", ":pkinit_plugin": "PlugIns"},
     deps = [":harness_main", "//third_party:krb5"],
+)
+
+pkinit_artifact(name = "pkinit_plugin", src = "//third_party:pkinit")
+
+swift_test(
+    name = "passkey_tests",
+    size = "small",
+    srcs = ["PasskeyTests.swift"],
+    deps = [":contract", ":worker", "//third_party:krb5_swift", "//third_party:libfido2_swift", "//passkey:wire"],
 )
 
 swift_test(

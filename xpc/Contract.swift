@@ -8,9 +8,11 @@ public enum Status: String, Sendable {
   case cancelled, deadlineExceeded, workerLost, disconnected, scriptedFailure
   case configurationInvalid, kdcUnavailable, credentialsRejected, unexpectedPrompt
   case authenticationFailed, publicationFailed
+  case passkeyInvalid, armorFailed, passkeyRequired, keyAbsent, wrongKey, deviceRemoved
+  case pinInvalid, pinBlocked, pinAuthBlocked, pinRequired, uvUnavailable, uvBlocked, deviceFailure
 }
 
-/// Immutable per-operation snapshot; configuration selects real password authentication.
+/// Immutable per-operation snapshot; configuration selects real authentication.
 @objc(KPasskeySnapshot)
 public final class Snapshot: NSObject, NSSecureCoding, Sendable {
   public static var supportsSecureCoding: Bool { true }
@@ -90,12 +92,14 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
   public let secret: Data?
   public let ticket: TicketMetadata?
   public let errorCode: Int32
+  public let choices: [String]
 
   public init(
-    _ kind: String, version: Int = 2, operation: String = "",
+    _ kind: String, version: Int = 3, operation: String = "",
     interaction: String = "", value: String = "", sequence: Int = 0,
     snapshot: Snapshot? = nil, remainingMilliseconds: Int = 0,
-    secret: Data? = nil, ticket: TicketMetadata? = nil, errorCode: Int32 = 0
+    secret: Data? = nil, ticket: TicketMetadata? = nil, errorCode: Int32 = 0,
+    choices: [String] = []
   ) {
     self.kind = kind
     self.version = version
@@ -108,6 +112,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     self.secret = secret
     self.ticket = ticket
     self.errorCode = errorCode
+    self.choices = choices
   }
 
   public var bounded: Bool {
@@ -116,10 +121,14 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       && (snapshot?.valid ?? true)
       && (secret.map { !$0.isEmpty && $0.count <= 4096 && !$0.contains(0) } ?? true)
       && (ticket?.valid ?? true)
+      && choices.count <= 16 && choices.allSatisfy {
+        !$0.isEmpty && $0.utf8.count <= 128
+          && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+      }
   }
 
   public var validCommand: Bool {
-    guard bounded, sequence == 0, remainingMilliseconds == 0, ticket == nil, errorCode == 0,
+    guard bounded, choices.isEmpty, sequence == 0, remainingMilliseconds == 0, ticket == nil, errorCode == 0,
       secret == nil || kind == "respond" else { return false }
     switch kind {
     case "negotiate":
@@ -131,7 +140,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     case "respond":
       return UUID(uuidString: operation)?.uuidString == operation
         && UUID(uuidString: interaction)?.uuidString == interaction
-        && ((secret == nil && ["key-1", "continue"].contains(value))
+        && ((secret == nil && (["key-1", "continue"].contains(value)
+          || (0..<16).contains(where: { value == "device-\($0)" })))
           || (secret != nil && value.isEmpty)) && snapshot == nil
     case "cancel":
       return UUID(uuidString: operation)?.uuidString == operation && interaction.isEmpty
@@ -161,7 +171,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       snapshot: coder.decodeObject(of: Snapshot.self, forKey: "snapshot"),
       remainingMilliseconds: coder.decodeInteger(forKey: "remainingMilliseconds"),
       secret: coder.decodeObject(of: NSData.self, forKey: "secret") as Data?, ticket: ticket,
-      errorCode: coder.decodeInt32(forKey: "errorCode"))
+      errorCode: coder.decodeInt32(forKey: "errorCode"),
+      choices: coder.decodeObject(of: [NSArray.self, NSString.self], forKey: "choices") as? [String] ?? [])
     guard bounded else { return nil }
   }
 
@@ -176,6 +187,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     coder.encode(remainingMilliseconds, forKey: "remainingMilliseconds")
     coder.encode(secret as NSData?, forKey: "secret")
     coder.encode(errorCode, forKey: "errorCode")
+    coder.encode(choices as NSArray, forKey: "choices")
     if let ticket { coder.encode(try! PropertyListEncoder().encode(ticket) as NSData, forKey: "ticket") }
   }
 }
@@ -190,7 +202,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
 
 public func workerInterface() -> NSXPCInterface {
   let interface = NSXPCInterface(with: WorkerProtocol.self)
-  let classes = NSSet(array: [Message.self, Snapshot.self, NSString.self, NSData.self]) as! Set<AnyHashable>
+  let classes = NSSet(array: [Message.self, Snapshot.self, NSString.self, NSData.self, NSArray.self]) as! Set<AnyHashable>
   for reply in [false, true] {
     interface.setClasses(
       classes, for: #selector(WorkerProtocol.exchange(_:reply:)),
@@ -202,7 +214,7 @@ public func workerInterface() -> NSXPCInterface {
 public func clientInterface() -> NSXPCInterface {
   let interface = NSXPCInterface(with: ClientProtocol.self)
   interface.setClasses(
-    NSSet(array: [Message.self, NSString.self, NSData.self]) as! Set<AnyHashable>,
+    NSSet(array: [Message.self, NSString.self, NSData.self, NSArray.self]) as! Set<AnyHashable>,
     for: #selector(ClientProtocol.receive(_:)), argumentIndex: 0, ofReply: false)
   return interface
 }

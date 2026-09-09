@@ -20,6 +20,26 @@ struct HarnessMain {
       print("connected host=\(getpid()) worker=\(client.workerPID) uid=\(geteuid())")
 
       let arguments = Array(CommandLine.arguments.dropFirst())
+      if arguments.first == "--passkey" {
+        guard arguments.count == 6, arguments[2] == "--rp", arguments[4] == "--ca" else {
+          throw HarnessError.rejected
+        }
+        var settings = Configuration(principal: arguments[1])
+        settings.mode = .passkey
+        settings.rpID = arguments[3]
+        let certificate = try Data(contentsOf: URL(fileURLWithPath: arguments[5]), options: .mappedIfSafe)
+        guard certificate.count <= 8192 else { throw HarnessError.rejected }
+        if let pem = String(data: certificate, encoding: .utf8), pem.hasPrefix("-----BEGIN CERTIFICATE-----") {
+          let body = pem.replacingOccurrences(of: "-----BEGIN CERTIFICATE-----", with: "")
+            .replacingOccurrences(of: "-----END CERTIFICATE-----", with: "")
+            .components(separatedBy: .whitespacesAndNewlines).joined()
+          guard let der = Data(base64Encoded: body) else { throw HarnessError.rejected }
+          settings.pkinitCA = der
+        } else { settings.pkinitCA = certificate }
+        guard settings.valid else { throw HarnessError.rejected }
+        try await passwordConsole(client, settings: settings)
+        return
+      }
       if arguments.first == "--password" || arguments.first == "--settings" {
         guard arguments.count == 2 else { throw HarnessError.rejected }
         let settings = arguments[0] == "--settings"
@@ -148,6 +168,21 @@ struct HarnessMain {
             throw HarnessError.rejected
           }
         }
+        var passkey = Configuration(principal: "synthetic@EXAMPLE.INVALID")
+        passkey.mode = .passkey
+        passkey.rpID = "example.invalid"
+        passkey.pkinitCA = Data([1])
+        let passkeyID = try await start("invalidPasskeyTrust", snapshot: Snapshot(configuration: passkey))
+        let rejected = try await wait(passkeyID, kind: "terminal")
+        guard rejected.value == "configurationInvalid", rejected.ticket == nil,
+          !events.contains(where: { $0.operation == passkeyID && $0.kind == "interaction" })
+        else { throw HarnessError.rejected }
+        let passkeyCancel = try await start("passkeyCancel", snapshot: Snapshot(configuration: passkey))
+        _ = try await client.cancel(passkeyCancel)
+        let cancelledPasskey = try await wait(passkeyCancel, kind: "terminal")
+        // Invalid trust can win this race; either outcome must stay unpublished.
+        guard ["cancelled", "configurationInvalid"].contains(cancelledPasskey.value), cancelledPasskey.ticket == nil
+        else { throw HarnessError.rejected }
         // Give any duplicate terminal callbacks a chance to arrive before the test inspects output.
         try await Task.sleep(for: .milliseconds(250))
         print("exercise complete")

@@ -2,6 +2,7 @@ import Foundation
 
 public struct Configuration: Codable, Sendable {
   public enum Transport: String, Codable, Sendable { case tcpFirst, udpFirst }
+  public enum Mode: String, Codable, Sendable { case password, passkey }
   public var schema = 1
   public var principal: String
   public var realm = ""
@@ -16,6 +17,10 @@ public struct Configuration: Codable, Sendable {
   public var makeDefault = true
   public var timeoutMilliseconds = 30_000
   public var networkTimeoutSeconds = 5
+  public var mode: Mode = .password
+  public var rpID = ""
+  /// DER certificate supplied as plist Data, never an arbitrary worker-side file path.
+  public var pkinitCA = Data()
 
   public init(principal: String) { self.principal = principal }
 
@@ -48,6 +53,10 @@ public struct Configuration: Codable, Sendable {
       && (0...2_592_000).contains(renewableLifetimeSeconds)
       && (200...30_000).contains(timeoutMilliseconds)
       && (1...30).contains(networkTimeoutSeconds)
+      && (mode == .password
+        ? rpID.isEmpty && pkinitCA.isEmpty
+        : KDCEndpoint.validHost(rpID) && rpID == rpID.lowercased()
+          && !effectiveRealm.isEmpty && !canonicalize && (1...4096).contains(pkinitCA.count))
   }
 
   public var effectiveRealm: String {
@@ -93,19 +102,20 @@ public struct TicketMetadata: Codable, Sendable {
   public let mode: String
 
   public init(principal: String, realm: String, cache: String, expires: Int,
-              renewUntil: Int, forwardable: Bool) {
+              renewUntil: Int, forwardable: Bool, mode: String = "password") {
     self.principal = principal
     self.realm = realm
     self.cache = cache
     self.expires = expires
     self.renewUntil = renewUntil
     self.forwardable = forwardable
-    self.mode = "password"
+    self.mode = mode
   }
 
   public var valid: Bool {
     Configuration.text(principal) && !principal.isEmpty && Configuration.text(realm)
       && !realm.isEmpty && cache.hasPrefix("API:") && cache.utf8.count <= 256
-      && Configuration.text(cache) && expires > 0 && renewUntil >= 0 && mode == "password"
+      && Configuration.text(cache) && expires > 0 && renewUntil >= 0
+      && ["password", "passkey"].contains(mode)
   }
 }

@@ -18,8 +18,9 @@ contracts, a client adapter, an embedded fake worker, and a console host app wit
 lifecycle and peer-identity tests. Milestone 3 adds password authentication,
 automatic DNS realm/KDC discovery, configurable forwardable tickets and shared
 macOS cache publication, validated live with Apple's `klist` and `kgetcred`.
-Validation details are in PLAN.md. No passkey plugin or graphical UI is
-implemented yet.
+Milestone 4 adds the Swift passkey plugin, libfido2 adapter, anonymous PKINIT
+armor and harness interactions. Offline validation passes; live passkey login
+and the hardware matrix remain pending in PLAN.md. No graphical UI exists yet.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after
@@ -65,14 +66,12 @@ criteria. Supporting documents describe:
 
 ## Planned source layout
 
-The build, third-party, tests, and XPC packages exist. Authentication and UI
-packages will be created in later milestones:
+The authentication packages exist; the native UI and release work remain later:
 
 ```text
 app/             SwiftUI/AppKit menu-bar application (later)
-xpc/             Contracts/client, password worker, MIT adapter, console, unit tests
-plugin/          Purpose-built PA-REDHAT-PASSKEY adapter
-fido/            libfido2 device and assertion adapter
+xpc/             Contracts/client, password/passkey worker, MIT/FIDO adapters, console
+passkey/         Swift PA-REDHAT-PASSKEY plugin, wire format and protocol tests
 third_party/     External repository metadata, BUILD overlays, patches
 build/           Shared Bazel macros, platforms, packaging support
 tests/           Fixtures, build probes, XPC and integration tests

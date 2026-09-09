@@ -133,6 +133,7 @@ private func values(_ profile: profile_t, _ path: [String]) throws -> [String] {
   #expect(authenticationStatus(Int32(KRB5_KDC_UNREACH)) == .kdcUnavailable)
   #expect(authenticationStatus(Int32(KRB5_CONFIG_NODEFREALM)) == .configurationInvalid)
   #expect(authenticationStatus(Int32(KRB5_LIBOS_CANTREADPWD)) == .unexpectedPrompt)
+  #expect(authenticationStatus(Int32(KRB5_PREAUTH_FAILED)) == .authenticationFailed)
 }
 
 @Test func publicationFailureRollsBackOnlyItsOwnCache() throws {

@@ -35,6 +35,16 @@ import Testing
   #expect(tcgetattr(slave, &restored) == 0)
   let changedFlags = tcflag_t(ECHO | ECHONL | ICANON | ISIG)
   #expect(restored.c_lflag & changedFlags == original.c_lflag & changedFlags)
+  let cancelled = Task.detached {
+    try readPassword(until: .now.advanced(by: .seconds(10)), terminal: input, label: "PIN")
+  }
+  #expect(try await output().contains("PIN"))
+  let start = ContinuousClock.now
+  cancelled.cancel()
+  #expect(try await cancelled.value == nil)
+  #expect(start.duration(to: .now) < .seconds(1))
+  #expect(tcgetattr(slave, &restored) == 0)
+  #expect(restored.c_lflag & changedFlags == original.c_lflag & changedFlags)
   #expect(try readPassword(until: .now.advanced(by: .milliseconds(50)), terminal: slave) == nil)
   #expect(tcgetattr(slave, &restored) == 0)
   #expect(restored.c_lflag & changedFlags == original.c_lflag & changedFlags)

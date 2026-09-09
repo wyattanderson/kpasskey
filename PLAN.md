@@ -2,7 +2,8 @@
 
 Status: milestones 1–3 implemented on arm64 macOS, including live password
 authentication and use of the published TGT by Apple's system Kerberos tools.
-Milestone 4 onward remains pending; no passkey authentication is implemented.
+Milestone 4 implementation is present with offline protocol, plugin and XPC
+coverage; live passkey authentication and hardware acceptance remain pending.
 Decisions recorded: 2026-09-05.
 
 ## Objective and scope
@@ -291,22 +292,22 @@ Acceptance:
 
 Deliverables:
 
-- [ ] Define protocol fixtures and expected rejection behavior from the KDC-side
+- [x] Define protocol fixtures and expected rejection behavior from the KDC-side
   implementation; use synthetic data and an independent decoding oracle.
-- [ ] Implement the minimal MIT clpreauth plugin described in docs/PROTOCOL.md
+- [x] Implement the minimal MIT clpreauth plugin described in docs/PROTOCOL.md
   in Swift, with a C ABI shim only if a documented interoperability limitation
   makes it absolutely and functionally necessary. Reuse no old helper CLI,
   terminal prompt parsing, or checkout-relative paths.
-- [ ] Add the libfido2 adapter with device selection, PIN/UV policy, explicit
+- [x] Add the libfido2 adapter with device selection, PIN/UV policy, explicit
   operation deadlines, cancellation, and useful device error categories.
-- [ ] Route assertions through MIT's responder boundary into the worker's XPC
+- [x] Route assertions through MIT's responder boundary into the worker's XPC
   interactions. The plugin itself owns no windows or XPC listener.
-- [ ] Add anonymous PKINIT FAST armor acquisition, explicit CA trust, ephemeral
+- [x] Add anonymous PKINIT FAST armor acquisition, explicit CA trust, ephemeral
   armor-cache ownership, and failure behavior. This introduces stock PKINIT
   execution after plain Kerberos was validated independently.
-- [ ] Load only the bundled passkey plugin using application-owned configuration
+- [x] Load only the bundled passkey plugin using application-owned configuration
   and paths, and require FAST for the passkey operation.
-- [ ] Make passkey-only requests fail closed instead of silently obtaining a
+- [x] Make passkey-only requests fail closed instead of silently obtaining a
   password-based ticket. Plain-password authentication remains a separate mode.
 
 Acceptance:
@@ -319,11 +320,53 @@ Acceptance:
   wrong PIN, exhausted/blocked PIN state where safely testable, device UV,
   timeout, cancellation, and worker restart. Simulate lockout errors rather
   than deliberately exhausting a user's real key.
-- [ ] Parser tests cover invalid phase, malformed/oversized data, bad Base64,
+- [x] Parser tests cover invalid phase, malformed/oversized data, bad Base64,
   wrong hash length, bad framing, and realm/RP mismatch.
-- [ ] Valid and malformed authenticator-data encodings are tested against the
+- [x] Valid and malformed authenticator-data encodings are tested against the
   actual server expectations. Cancellation/failure never publishes new tickets.
 - [ ] End-to-end success is demonstrated without building or shipping SSSD.
+
+### Implementation evidence and remaining acceptance
+
+- `passkey/` implements framing, bounded Codable messages and the MIT clpreauth
+  vtable entirely in Swift. The C entry point and callbacks require no shim.
+  It validates FAST availability, callback version, exact realm/RP binding,
+  allow-list membership, original state/challenge, CBOR authdata and UP/UV before
+  setting the armor reply key and disabling fallback. It owns no device handle,
+  prompt, helper process or XPC listener.
+- Synthetic fixtures use Foundation's object decoder independently of the
+  production Codable decoder, reproduce the KDC cookie checks, and exercise the
+  actual libfido2 authdata decoder and signature verifier with generated P-256
+  proofs. Negative tests include malformed framing, phases, Base64, lengths,
+  CBOR/trailing bytes, raw-versus-wrapped authdata, UV and realm/RP mismatch.
+  Callback tests exercise a complete responder answer with a null prompter,
+  state mismatch, missing armor and unsupported interface versions.
+- `xpc/FIDO.swift` selects from an operation-scoped HID manifest, uses onboard
+  UV or one requested PIN attempt, preserves device failure categories and
+  applies the remaining deadline to native device calls. XPC version 3 routes
+  device choices/PINs and verifies the requested success mode. Terminal input
+  is hidden and restored on cancellation. Blocked native calls retain the
+  existing worker-exit bound; cancellation gates publication.
+- `xpc/Passkey.swift` creates separate PKINIT and passkey contexts, supplies an
+  explicit CA, owns a MEMORY armor cache, requires FAST and checks MIT's selected
+  preauthentication type before reusing the existing cache publication path.
+  No SSSD or old assertion helper is in the build or runtime graph.
+- The signed host contains only the selected PKINIT artifact and the Swift
+  plugin in `Contents/PlugIns`. Relocation checks load both and verify their
+  shared MIT runtime. Tests cover invalid trust through XPC, mode isolation,
+  cancellation/deadlines, safe simulated PIN/block/removal error categories and
+  existing password/publication/peer-identity behavior. `//:milestone4` groups
+  the relevant checks. Full development and default-policy Bazel suites pass.
+- A user-run lab attempt completed anonymous PKINIT armor acquisition, then
+  failed passkey preauthentication before device interaction. A synthetic
+  regression reproduced the failure through MIT's actual loader: the plugin
+  rejected its reported minor interface version. Matching the bundled MIT
+  plugins' compatibility check fixes loading; the regression now reaches the
+  plugin's armor guard. Live passkey authentication still needs a rerun. No passkey TGT or
+  system-consumer use is claimed. Complete the live FreeIPA/version and key/firmware/UV matrix,
+  multiple/absent/wrong/removed-key tests, cancellation/restart during device work,
+  and system `klist`/consumer checks before marking milestone 4 accepted. Simulate
+  lockout errors; do not exhaust a user's real PIN retry counter.
 
 ## Later — Native application and release
 
@@ -346,7 +389,7 @@ versions on GitHub Releases. Test every architecture actually advertised.
 | Intel support | M1 resolved | arm64 only; x86_64 is not a release requirement |
 | MIT/libfido2 crypto dependencies | M1 resolved | Bundle OpenSSL; compatibility rationale lives beside its pin in MODULE.bazel |
 | Static versus dynamic third-party linkage | M1 resolved | Shared MIT/OpenSSL; static libfido2/libcbor/zlib; one MIT runtime |
-| JSON library | M4 | Deferred until the passkey wire parser is needed; use an established parser |
+| JSON library | M4 resolved | Foundation Codable in production; independent JSONSerialization fixture decoding |
 | Shared-cache backend support and visibility | M3 resolved | Unique API cache in the caller's audit session; live Apple klist/kgetcred validated |
 | XPC DTOs, service identity, console hosting | M2 resolved | Secure Swift envelopes; verified peer signing; embedded unprivileged service and console host |
 | Profile backend completeness and discovery | M3 resolved | Native memory-only MIT profile, explicit options, DNS realm/KDC discovery |

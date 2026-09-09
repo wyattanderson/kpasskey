@@ -80,8 +80,19 @@ No terminal prompts, helper execution, XPC listener, UI objects, device handles,
 or custom Kerberos transport live in the plugin. Its worker-facing responder
 schema may be independent of its KDC-facing encoding. Do not require a non-null
 terminal prompter when the application supplied a complete responder answer.
+Plugin validation failures return application-owned numeric codes defined by
+`WireError` in `passkey/Wire.swift`, carried through the existing XPC error code
+with status `passkeyInvalid` when MIT preserves the code. MIT preserves
+`prep_questions` errors but can wrap `process` errors in `KRB5_PREAUTH_FAILED`.
+These codes identify the failed check without logging challenge contents.
+Generic MIT `KRB5_PREAUTH_FAILED` means
+`authenticationFailed`; only `KRB5_LIBOS_CANTREADPWD` means `unexpectedPrompt`.
 See [MIT clpreauth documentation](https://web.mit.edu/kerberos/krb5-latest/doc/plugindev/clpreauth.html)
 and the selected release's `clpreauth_plugin.h` for the interface contract.
+The bundled loader passes minor 1 while allocating and calling the responder
+vtable extension. Follow its PKINIT/SPAKE plugins' major-only initialization
+check; callback capabilities are checked separately. The relocation test feeds
+synthetic PA-DATA through MIT's real loader to verify this compatibility.
 
 ## libfido2 adapter responsibilities
 
@@ -103,6 +114,30 @@ optional fields. Avoid extending this milestone into credential enrollment,
 authenticator management, or local offline login verification.
 
 ## Verification strategy
+
+The implementation is in `passkey/Wire.swift`, `passkey/Plugin.swift`,
+`xpc/FIDO.swift` and `xpc/Passkey.swift`. Foundation supplies JSON parsing;
+libcbor requires one complete definite byte string for authdata and libfido2
+decodes its contents. CryptoKit supplies the local RP hash check. None of these
+local checks replaces the KDC's signature verification.
+
+The inspected SSSD `krb5_child.c` maps zero UV to false and nonzero to true;
+KPasskey accepts only the documented zero/one policies and rejects other integers.
+The challenge hash is exactly 32 bytes, the allow-list has one to 64 distinct
+credentials of at most 1 KiB each, state is at most 4 KiB, and the complete framed
+message is at most 64 KiB. Base64 must be canonical standard padded Base64.
+Reply signatures are bounded to 2 KiB, authdata to 16 KiB, and optional user
+handles to 64 bytes. No credential or challenge is logged.
+
+The independently authored fixtures follow `sss_passkeykdc_verify`'s exact
+state/challenge checks and `prepare_assert`'s call to `fido_assert_set_authdata`.
+Tests decode reply objects through JSONSerialization, separately from production
+Codable, and verify synthetic P-256 signatures with `fido_assert_verify`, the
+server's upstream verification API. They also check no-armor and null-prompter
+plugin behavior. No SSSD code was copied or added to the build dependency graph;
+the reference sources establish protocol semantics, not a new source license.
+These tests do not substitute for testing the deployed FreeIPA/KDC decoder.
+The live compatibility/version matrix remains pending in PLAN.md.
 
 Use synthetic serialization fixtures and negative cases before live tests.
 Include independent checks against the KDC-side decoder/verifier so an encoder

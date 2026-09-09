@@ -21,7 +21,7 @@ swift_test(
     data = ["//xpc:harness"],
     # Exercise this Mac's per-user launchd; retain the Darwin execution sandbox.
     tags = ["no-remote"],
-    deps = [":build_test_support"],
+    deps = [":build_test_support", "//third_party:krb5_swift", "//passkey:wire"],
 )
 
 swift_library(

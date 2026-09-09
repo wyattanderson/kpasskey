@@ -21,7 +21,7 @@ public final class WorkerClient {
   private var generation = UUID()
   private var ready = false
   private var pending: [UUID: CheckedContinuation<Message, any Error>] = [:]
-  private var operations: [String: (sequence: Int, password: Bool)] = [:]
+  private var operations: [String: (sequence: Int, mode: String?)] = [:]
   private var deadlines: [String: Task<Void, Never>] = [:]
 
   public init() {}
@@ -55,7 +55,7 @@ public final class WorkerClient {
     // launchd throttles a service restart after a crash; negotiation allows that delay.
     let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
     guard generation == token else { throw ClientFailure(status: .disconnected) }
-    guard reply.kind == "negotiated", reply.version == 2, reply.value == "fake,password",
+    guard reply.kind == "negotiated", reply.version == 3, reply.value == "fake,password,passkey",
       reply.sequence > 0, reply.sequence <= Int(Int32.max), reply.sequence != Int(getpid())
     else {
       close(.protocolViolation)
@@ -75,7 +75,7 @@ public final class WorkerClient {
     let tracking = operations[operation] == nil
     let token = generation
     if tracking {
-      operations[operation] = (0, snapshot.configuration != nil)
+      operations[operation] = (0, snapshot.configuration?.mode.rawValue)
       armDeadline(operation, milliseconds: snapshot.timeoutMilliseconds + 1_000)
     }
     do {
@@ -129,7 +129,7 @@ public final class WorkerClient {
       proxy.exchange(message) { [weak self] reply in
         Task { @MainActor in
           guard let self, self.generation == token else { return }
-          guard reply.bounded, reply.version == 2, reply.secret == nil, reply.ticket == nil,
+          guard reply.bounded, reply.version == 3, reply.secret == nil, reply.ticket == nil, reply.choices.isEmpty,
             reply.errorCode == 0,
             reply.operation == message.operation, reply.interaction.isEmpty,
             reply.snapshot == nil, reply.remainingMilliseconds == 0,
@@ -159,14 +159,18 @@ public final class WorkerClient {
 
   private func receive(_ event: Message) {
     guard let operation = operations[event.operation] else { return }
-    guard event.bounded, event.version == 2, event.snapshot == nil, event.secret == nil,
+    let interactions = operation.mode == "passkey" ? ["selectDevice", "pin"]
+      : operation.mode == "password" ? ["password"] : ["selectKey", "touch"]
+    guard event.bounded, event.version == 3, event.snapshot == nil, event.secret == nil,
       (event.kind == "terminal" || (event.ticket == nil && event.errorCode == 0)),
       (event.ticket == nil || (event.kind == "terminal" && event.value == "ok")),
-      (event.kind != "terminal" || event.value != "ok" || (event.ticket != nil) == operation.password),
+      (event.kind != "terminal" || event.value != "ok" || event.ticket?.mode == operation.mode),
+      (event.value == "selectDevice" && event.kind == "interaction"
+        ? !event.choices.isEmpty : event.choices.isEmpty),
       event.sequence == operation.sequence + 1,
-      (event.kind == "progress" && ["started", "authenticating"].contains(event.value) && event.interaction.isEmpty
+      (event.kind == "progress" && ["started", "authenticating", "acquiringArmor", "touchKey", "verifyOnDevice"].contains(event.value) && event.interaction.isEmpty
         && event.remainingMilliseconds == 0)
-        || (event.kind == "interaction" && ["selectKey", "touch", "password"].contains(event.value)
+        || (event.kind == "interaction" && interactions.contains(event.value)
           && UUID(uuidString: event.interaction)?.uuidString == event.interaction)
         || (event.kind == "terminal" && Status(rawValue: event.value) != nil
           && event.interaction.isEmpty
@@ -175,7 +179,7 @@ public final class WorkerClient {
       close(.protocolViolation)
       return
     }
-    operations[event.operation] = (event.sequence, operation.password)
+    operations[event.operation] = (event.sequence, operation.mode)
     if event.kind == "terminal" { forget(event.operation) }
     onEvent(event)
   }

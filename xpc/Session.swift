@@ -8,6 +8,8 @@ public final class WorkerSession: NSObject, WorkerProtocol {
   private static var kerberosBusy = false
   private var gate: PublicationGate?
   private var nativeWork: Task<Void, Never>?
+  private var passkeyInteraction: PasskeyInteraction?
+  private var deviceCount = 0
   private var negotiated = false
   private var connected = true
   private var active: Message?
@@ -37,10 +39,10 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       Message(kind, operation: message.operation, value: status.rawValue)
     }
     guard connected, message.validCommand else { return answer(.protocolViolation) }
-    guard message.version == 2 else { return answer(.unsupportedVersion) }
+    guard message.version == 3 else { return answer(.unsupportedVersion) }
     if message.kind == "negotiate" {
       negotiated = true
-      return Message("negotiated", value: "fake,password", sequence: Int(getpid()))
+      return Message("negotiated", value: "fake,password,passkey", sequence: Int(getpid()))
     }
     guard negotiated else { return answer(.protocolViolation) }
     switch message.kind {
@@ -56,7 +58,8 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       if message.snapshot!.configuration != nil {
         Self.kerberosBusy = true
         gate = PublicationGate(deadline: expires)
-        prompt("password")
+        if message.snapshot!.configuration!.mode == .passkey { beginNative() }
+        else { prompt("password") }
       } else { prompt("selectKey") }
       let milliseconds = message.snapshot!.timeoutMilliseconds
       deadline = Task { [weak self] in
@@ -69,29 +72,22 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       guard active?.operation == message.operation, interaction == message.interaction else {
         return answer(.staleInteraction)
       }
-      if stage == "password" {
-        guard let secret = message.secret, message.value.isEmpty,
-          let configuration = active?.snapshot?.configuration, let gate else {
-          return answer(.protocolViolation)
-        }
+      if let passkeyInteraction {
+        guard (stage == "pin" && message.secret != nil && message.secret!.count <= 63)
+          || (stage == "selectDevice" && message.secret == nil
+            && (0..<deviceCount).contains(where: { message.value == "device-\($0)" }))
+        else { return answer(.protocolViolation) }
         interaction = ""
         stage = "authenticating"
-        event("progress", value: stage)
-        nativeWork = Task { [self] in
-          let result = await Task.detached {
-            Result { try acquirePassword(configuration, password: secret, gate: gate) }
-          }.value
-          nativeWork = nil
-          Self.kerberosBusy = false
-          self.gate = nil
-          guard active != nil else { return }
-          switch result {
-          case .success(let ticket): finish(.ok, ticket: ticket)
-          case .failure(let error):
-            let failure = error as? KerberosFailure ?? KerberosFailure(.authenticationFailed)
-            finish(failure.status, code: failure.code)
-          }
+        passkeyInteraction.respond(message)
+        return answer(.ok)
+      }
+      if stage == "password" {
+        guard let secret = message.secret, message.value.isEmpty,
+          active?.snapshot?.configuration != nil, gate != nil else {
+          return answer(.protocolViolation)
         }
+        beginNative(password: secret)
         return answer(.ok)
       }
       guard
@@ -111,6 +107,42 @@ public final class WorkerSession: NSObject, WorkerProtocol {
     }
   }
 
+  private func beginNative(password: Data? = nil) {
+    guard let configuration = active?.snapshot?.configuration, let gate else { return }
+    interaction = ""
+    stage = "authenticating"
+    event("progress", value: stage)
+    let bridge = PasskeyInteraction(gate: gate, deadline: expires) { [weak self] stage, choices in
+      Task { @MainActor in
+        guard let self, self.gate === gate, self.active != nil else { return }
+        if ["pin", "selectDevice"].contains(stage) {
+          self.deviceCount = choices.count
+          self.prompt(stage, choices: choices)
+        } else { self.event("progress", value: stage) }
+      }
+    }
+    if configuration.mode == .passkey { passkeyInteraction = bridge }
+    nativeWork = Task { [self] in
+      let result = await Task.detached {
+        Result {
+          if let password { return try acquirePassword(configuration, password: password, gate: gate) }
+          return try acquirePasskey(configuration, interaction: bridge)
+        }
+      }.value
+      nativeWork = nil
+      Self.kerberosBusy = false
+      self.gate = nil
+      passkeyInteraction = nil
+      guard active != nil else { return }
+      switch result {
+      case .success(let ticket): finish(.ok, ticket: ticket)
+      case .failure(let error):
+        let failure = error as? KerberosFailure ?? KerberosFailure(.authenticationFailed)
+        finish(failure.status, code: failure.code)
+      }
+    }
+  }
+
   public func disconnect() {
     connected = false
     stop(.disconnected)
@@ -124,6 +156,7 @@ public final class WorkerSession: NSObject, WorkerProtocol {
   private func stop(_ status: Status) {
     // Once publication begins, cancellation cannot turn a committed ticket into a cancelled result.
     if let gate, !gate.cancel() { return }
+    passkeyInteraction?.cancel()
     if let gate, nativeWork != nil {
       Task { [self] in
         try? await Task.sleep(for: .milliseconds(750))
@@ -134,13 +167,14 @@ public final class WorkerSession: NSObject, WorkerProtocol {
     finish(status)
   }
 
-  private func prompt(_ stage: String) {
+  private func prompt(_ stage: String, choices: [String] = []) {
     self.stage = stage
     interaction = UUID().uuidString
-    event("interaction", value: stage)
+    event("interaction", value: stage, choices: choices)
   }
 
-  private func event(_ kind: String, value: String, ticket: TicketMetadata? = nil, code: Int32 = 0) {
+  private func event(_ kind: String, value: String, ticket: TicketMetadata? = nil, code: Int32 = 0,
+                     choices: [String] = []) {
     guard connected, let active else { return }
     sequence += 1
     emit(
@@ -153,7 +187,7 @@ public final class WorkerSession: NSObject, WorkerProtocol {
             min(
               30_000,
               Int(ContinuousClock.now.duration(to: expires) / .milliseconds(1)))) : 0,
-        ticket: ticket, errorCode: code))
+        ticket: ticket, errorCode: code, choices: choices))
   }
 
   private func finish(_ status: Status, ticket: TicketMetadata? = nil, code: Int32 = 0) {

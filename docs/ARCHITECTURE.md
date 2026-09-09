@@ -20,8 +20,9 @@ flowchart LR
     M --> A[New shared macOS API cache]
 ```
 
-The future passkey plugin, libfido2 adapter and FAST armor extend the worker in
-milestone 4. Password mode loads none of them. Swift implements the contracts,
+The passkey plugin, libfido2 adapter and FAST armor extend the worker in
+milestone 4. Password mode enables only encrypted-timestamp preauthentication
+and performs no device operations or PKINIT. Swift implements the contracts,
 worker, adapters, console and tests, following [AGENTS.md](../AGENTS.md).
 Declaration-only Clang modules expose upstream C libraries; no C/Objective-C
 implementation shim is needed.
@@ -29,8 +30,8 @@ implementation shim is needed.
 ## Wire contract
 
 `WorkerProtocol.exchange(_:reply:)` and `ClientProtocol.receive(_:)` exchange
-immutable `Message: NSObject, NSSecureCoding` envelopes. Protocol version 2
-negotiates `fake,password`; version 1 peers are rejected. The negotiation reply
+immutable `Message: NSObject, NSSecureCoding` envelopes. Protocol version 3
+negotiates `fake,password,passkey`; older peers are rejected. The negotiation reply
 includes the verified worker PID for process-boundary tests. Fake success never
 claims a credential exists.
 
@@ -38,17 +39,18 @@ claims a credential exists.
 | --- | --- |
 | `negotiate` / `negotiated` | Version and capabilities, required before start |
 | `start` / `ack` | New UUID and immutable `Snapshot`; acknowledgment only |
-| `progress` | Operation ID, contiguous sequence and `started` or `authenticating` |
+| `progress` | Operation ID, contiguous sequence and start, armor, authentication, touch or onboard verification stage |
 | `interaction` | Operation ID, fresh interaction UUID, stage and remaining milliseconds |
 | `respond` / `ack` | Matching IDs and a stage-specific response |
 | `cancel` / `ack` | Idempotent cancellation intent |
 | `terminal` | Exactly one status, optional numeric MIT error and success metadata |
 
 `Snapshot` schema 1 retains the scripted M2 fields and adds an optional typed
-`Configuration` schema 1. Presence of configuration selects password mode;
+`Configuration` schema 1. Its `mode` selects password or passkey authentication;
 legacy synthetic principal/realm/outcome fields are then unused. Operation
 timeout is taken from the effective real configuration. The console selects
-password mode only with `--password` or `--settings`; no arguments retain the
+password mode with `--password`, passkey mode with `--passkey`, or either using
+`--settings`; no arguments retain the
 scripted harness for boundary regression tests.
 
 Fake interactions accept `key-1` for `selectKey` and `continue` for `touch`.
@@ -57,15 +59,25 @@ value and a separate `Data` secret, nonempty, at most 4 KiB and without NUL.
 Unexpected additional MIT prompter calls are rejected, including password
 changes; raw library prompts are not displayed or logged.
 
+Passkey mode starts native work immediately and bridges MIT responder questions
+to `selectDevice` and `pin` interactions. A device menu contains at most sixteen
+sanitized labels of at most 128 UTF-8 bytes. Responses use `device-0` through
+`device-15`, scoped to the worker's current manifest; paths never cross XPC.
+A single key is selected automatically. PINs use the secret field and must be
+valid UTF-8, at least four Unicode scalars, and at most 63 bytes. Touch/onboard
+UV are progress events; the device completes them. The console's hidden read
+also stops on terminal outcomes, restoring terminal settings promptly.
+
 UUIDs must use canonical uppercase representation. Unused fields must be empty
 or zero. Limits are UTF-8 bytes: kinds 32, IDs 36, text values 256. Sequences
 are nonnegative; remaining time is 0–30,000 ms. Only start may carry settings;
-only password responses may carry secrets; only successful password terminals
+only password/PIN responses may carry secrets; only successful real terminals
 may carry ticket metadata. Both decoder and session validate messages. The
-client verifies categories, shapes, contiguous sequences and password success
+client verifies categories, shapes, contiguous sequences and matching authentication-mode success
 metadata, and ignores callbacks from previous connection generations.
 
-The secure object graph is `Message`, `Snapshot`, `NSString` and `NSData`;
+The secure object graph is `Message`, `Snapshot`, `NSString`, `NSData` and
+`NSArray` (device labels only);
 callbacks omit Snapshot. Typed configuration and ticket metadata are encoded
 inside bounded binary plists (8 KiB and 4 KiB) and decoded with Codable, then
 validated. There are no arbitrary object dictionaries, NSError payloads,
@@ -93,6 +105,10 @@ MIT work and secure terminal input run on separate execution resources. The
 worker collects the password before native work; MIT's prompter never blocks
 XPC waiting for an unrepresented interaction. No automatic operation retries
 occur, though MIT retains native KDC transport failover.
+For passkeys, the native thread waits on a condition variable while the actor
+routes responder interactions. Cancellation wakes that wait. A blocked HID
+call uses the same process-exit grace as MIT; libfido2 handles are never accessed
+concurrently from an unsafe cancellation thread.
 
 Cancellation before the publication gate sends one terminal result promptly,
 prevents publication, and acknowledges independently of callback delivery. A

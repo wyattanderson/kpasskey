@@ -1,6 +1,7 @@
 import CMITKerberos
 import Foundation
 import KPasskeyContract
+import PasskeyWire
 
 public struct KerberosFailure: Error, Sendable {
   public let status: Status
@@ -39,7 +40,8 @@ public final class PublicationGate: @unchecked Sendable {
 }
 
 /// MIT owns lookup, copying and iteration. No file names or custom vtable are needed.
-public func makeProfile(_ settings: Configuration) throws -> profile_t {
+public func makeProfile(_ settings: Configuration, plugin: String? = nil,
+                        armor: Bool = false, anchors: String? = nil) throws -> profile_t {
   guard settings.valid else { throw KerberosFailure(.configurationInvalid) }
   var profile: profile_t?
   try checked(Int32(profile_init(nil, &profile)))
@@ -67,8 +69,21 @@ public func makeProfile(_ settings: Configuration) throws -> profile_t {
       try add(["libdefaults", "default_realm"], settings.effectiveRealm)
     }
     for kdc in settings.kdcs { try add(["realms", settings.effectiveRealm, "kdc"], kdc.address) }
-    // Password mode has only the built-in encrypted timestamp preauthentication module.
-    try add(["plugins", "clpreauth", "enable_only"], "encrypted_timestamp")
+    if settings.mode == .passkey {
+      guard let plugin else { throw KerberosFailure(.configurationInvalid) }
+      let module = armor ? "pkinit" : "kpasskey"
+      try add(["plugins", "clpreauth", "module"], module + ":" + plugin)
+      try add(["plugins", "clpreauth", "enable_only"], module)
+      try add(["kpasskey", "realm"], settings.effectiveRealm)
+      try add(["kpasskey", "rp"], settings.rpID)
+      if armor {
+        guard let anchors else { throw KerberosFailure(.configurationInvalid) }
+        try add(["realms", settings.effectiveRealm, "pkinit_anchors"], "FILE:" + anchors)
+        try add(["realms", settings.effectiveRealm, "pkinit_eku_checking"], "kpKDC")
+      }
+    } else {
+      try add(["plugins", "clpreauth", "enable_only"], "encrypted_timestamp")
+    }
     // No heuristic uppercase-domain fallback: realm discovery must come from DNS or the snapshot.
     for module in ["profile", "dns"] { try add(["plugins", "hostrealm", "enable_only"], module) }
     return profile
@@ -78,8 +93,9 @@ public func makeProfile(_ settings: Configuration) throws -> profile_t {
   }
 }
 
-public func makeContext(_ settings: Configuration) throws -> krb5_context {
-  let profile = try makeProfile(settings)
+public func makeContext(_ settings: Configuration, plugin: String? = nil,
+                        armor: Bool = false, anchors: String? = nil) throws -> krb5_context {
+  let profile = try makeProfile(settings, plugin: plugin, armor: armor, anchors: anchors)
   defer { profile_abandon(profile) }
   var context: krb5_context?
   try checked(krb5_init_context_profile(profile, KRB5_INIT_CONTEXT_SECURE, &context))
@@ -126,13 +142,14 @@ public func credentialOptions(_ settings: Configuration, context: krb5_context)
 }
 
 public func authenticationStatus(_ code: Int32) -> Status {
+  if WireError(rawValue: code) != nil { return .passkeyInvalid }
   switch code {
   case Int32(KRB5KDC_ERR_PREAUTH_FAILED), Int32(KRB5KRB_AP_ERR_BAD_INTEGRITY),
        Int32(KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN), Int32(KRB5KDC_ERR_CLIENT_REVOKED),
        Int32(KRB5KDC_ERR_KEY_EXP): return .credentialsRejected
   case Int32(KRB5_KDC_UNREACH), Int32(KRB5_REALM_CANT_RESOLVE): return .kdcUnavailable
   case Int32(KRB5_REALM_UNKNOWN), Int32(KRB5_CONFIG_NODEFREALM): return .configurationInvalid
-  case Int32(KRB5_LIBOS_CANTREADPWD), Int32(KRB5_PREAUTH_FAILED): return .unexpectedPrompt
+  case Int32(KRB5_LIBOS_CANTREADPWD): return .unexpectedPrompt
   default: return .authenticationFailed
   }
 }
@@ -141,7 +158,8 @@ public func authenticationStatus(_ code: Int32) -> Status {
 public func acquirePassword(_ settings: Configuration, password: Data, gate: PublicationGate)
   throws -> TicketMetadata
 {
-  guard settings.valid, !password.isEmpty, password.count <= 4096, !password.contains(0) else {
+  guard settings.valid, settings.mode == .password,
+    !password.isEmpty, password.count <= 4096, !password.contains(0) else {
     throw KerberosFailure(.configurationInvalid)
   }
   try gate.check()
@@ -174,6 +192,7 @@ public func acquirePassword(_ settings: Configuration, password: Data, gate: Pub
 /// Commit creates a fresh API cache. Rollback destroys only that newly owned cache.
 public func publish(context: krb5_context, staging: krb5_ccache,
                     credentials: inout krb5_creds, makeDefault: Bool, gate: PublicationGate,
+                    mode: String = "password",
                     createCache: (krb5_context, UnsafeMutablePointer<krb5_ccache?>) -> Int32 = {
                       krb5_cc_new_unique($0, "API", nil, $1)
                     })
@@ -189,7 +208,7 @@ public func publish(context: krb5_context, staging: krb5_ccache,
   // Validate metadata before any shared-cache side effect.
   let metadata = TicketMetadata(principal: principal, realm: realm, cache: "API:pending",
     expires: Int(credentials.times.endtime), renewUntil: Int(credentials.times.renew_till),
-    forwardable: credentials.ticket_flags & TKT_FLG_FORWARDABLE != 0)
+    forwardable: credentials.ticket_flags & TKT_FLG_FORWARDABLE != 0, mode: mode)
   guard metadata.valid else { throw KerberosFailure(.publicationFailed) }
   try gate.beginPublication()
   var destination: krb5_ccache?
@@ -205,7 +224,7 @@ public func publish(context: krb5_context, staging: krb5_ccache,
   try checked(krb5_cc_get_full_name(context, destination, &cacheName), .publicationFailed)
   defer { krb5_free_string(context, cacheName) }
   let result = TicketMetadata(principal: principal, realm: realm, cache: String(cString: cacheName!),
-    expires: metadata.expires, renewUntil: metadata.renewUntil, forwardable: metadata.forwardable)
+    expires: metadata.expires, renewUntil: metadata.renewUntil, forwardable: metadata.forwardable, mode: mode)
   guard result.valid else { throw KerberosFailure(.publicationFailed) }
   if makeDefault { try checked(krb5_cc_switch(context, destination), .publicationFailed) }
   committed = true

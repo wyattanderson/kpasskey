@@ -1,9 +1,9 @@
 # Application-owned Kerberos configuration
 
-`xpc/Configuration.swift` defines the typed password configuration. The client
+`xpc/Configuration.swift` defines the typed authentication configuration. The client
 sends an immutable snapshot; the worker validates it again. Secrets, MIT profile
 text, plugin paths, environment changes and arbitrary cache/file destinations
-are not settings. Passkey, RP mapping and PKINIT trust belong to milestone 4.
+are not settings. Passkey RP binding and explicit PKINIT trust are included.
 
 ## Settings schema
 
@@ -15,6 +15,9 @@ consumes effective values only.
 | Field | Default and supported policy |
 | --- | --- |
 | `schema` | `1`; other schemas rejected |
+| `mode` | `password`; `passkey` requires explicit realm, RP and CA, and disables canonicalization |
+| `rpID` | Empty in password mode; exact lowercase DNS name authorized for the explicit realm in passkey mode |
+| `pkinitCA` | Empty in password mode; DER CA certificate as plist Data, at most 4 KiB, in passkey mode |
 | `principal` | Required; username or `username@REALM`, no product default |
 | `realm` | Empty; optional explicit realm, must agree with a qualified principal |
 | `discoveryDomain` | Empty; optional DNS domain for an unqualified username |
@@ -89,6 +92,42 @@ initial-credential options. Only the built-in encrypted timestamp client
 preauthentication module is enabled. Neither passkey nor stock PKINIT is
 loaded. Unexpected prompter calls are rejected; password changes and OTP
 prompts are not silently answered.
+
+## Passkey and FAST
+
+Passkey mode requires an explicit realm, including one from a qualified
+principal. The KDC's RP must equal `rpID` exactly; both request principal realms
+must equal the configured realm in full. DNS discovery may locate KDCs but
+cannot authorize a different RP. Canonicalization/referrals are not exposed in
+passkey mode. UV policy comes from the server's integer `user_verification`:
+zero is optional, one is required; other values fail closed.
+
+The harness accepts `--passkey user@REALM --rp example.org --ca /path/to/ca.pem`
+(PEM or DER). It reads the public certificate locally and sends DER bytes; the
+worker does not accept a caller-chosen trust-file path. Partial plists can also
+select this mode. The worker validates the certificate with Security.framework,
+writes a PEM copy into a uniquely owned private temporary directory and deletes
+it on ordinary exit. Forced worker termination can leave this public certificate
+in the OS temporary directory; it never contains a private key or credential.
+
+An isolated context enables only the bundled stock PKINIT plugin and uses this
+CA with the normal KDC SAN and KDC EKU checks. Anonymous credentials go into an
+owned MEMORY armor cache; failure stops authentication. A second context enables
+only the bundled `kpasskey` plugin, sets the armor handle and `KRB5_FAST_REQUIRED`,
+and rejects all password prompts. The private staging cache must contain MIT's
+selected `pa_type` of 153 and the worker must have answered the passkey responder
+before publication. A password or unrelated preauthentication success cannot
+satisfy a passkey request. Armor is destroyed after success or failure and dies
+with the worker on forced cancellation. Shared publication reuses the password
+path's gate, rollback and metadata policy, with `mode = passkey`.
+
+Device enumeration is bounded to sixteen HID devices. A selected device gets
+the remaining operation deadline before open and assertion calls. Required UV
+uses configured onboard UV when available, otherwise a configured PIN. An
+explicit `PIN_REQUIRED` response may prompt for one PIN attempt. Wrong PIN,
+PIN/auth blocks, failed/blocked UV, wrong key, removal and timeout terminate
+without automatic credential retries. Restart the operation after correcting
+the condition. There is no enrollment, PIN management, helper CLI or SSSD runtime.
 
 ## Environment and plugin audit
 
