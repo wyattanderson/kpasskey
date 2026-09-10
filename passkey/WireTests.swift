@@ -13,8 +13,8 @@ func challengeFixture(_ changes: [String: Any] = [:], phase: Any = 1) throws -> 
   return Data("passkey ".utf8) + (try JSONSerialization.data(withJSONObject:
     ["phase": phase, "state": "opaque-state-é", "data": payload])) + Data([0])
 }
-func fixtureAssertion(uv: Bool = true, raw: Bool = false) -> Assertion {
-  let body = Data(SHA256.hash(data: Data("example.org".utf8))) + Data([uv ? 5 : 1, 0, 0, 0, 1])
+func fixtureAssertion(uv: Bool = true, raw: Bool = false, domain: String = "example.org") -> Assertion {
+  let body = Data(SHA256.hash(data: Data(domain.utf8))) + Data([uv ? 5 : 1, 0, 0, 0, 1])
   return Assertion(credential: Data([1, 2, 3]), challenge: hashText,
     authdata: (raw ? Data() : Data([0x58, 0x25])) + body,
     signature: Data([0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01]), user: nil)
@@ -22,7 +22,7 @@ func fixtureAssertion(uv: Bool = true, raw: Bool = false) -> Assertion {
 
 @Test func serverReplyOracle() throws {
   let input = try decodeWire(challengeFixture(), as: Challenge.self, phase: 1)
-  try input.data.validate(rp: "example.org")
+  try input.data.validate()
   let assertion = fixtureAssertion()
   try assertion.validate(challenge: input.data)
   let bytes = try encodeWire(Envelope(phase: 2, state: input.state, data: assertion))
@@ -76,7 +76,12 @@ func fixtureAssertion(uv: Bool = true, raw: Bool = false) -> Assertion {
     #expect(throws: (any Error).self) { try decodeWire(Data(bad), as: Challenge.self, phase: 1) }
   }
   for changes: [String: Any] in [
-    ["domain": "example.org.evil"], ["domain": "EXAMPLE.ORG"],
+    ["domain": ""], ["domain": "example.org\0.evil"], ["domain": "https://example.org"],
+    ["domain": "example.org:443"], ["domain": ".example.org"], ["domain": "example..org"],
+    ["domain": "example.org."], ["domain": "-example.org"], ["domain": "example-.org"],
+    ["domain": "exam_ple.org"], ["domain": "example.org\n"], ["domain": "éxample.org"],
+    ["domain": String(repeating: "a", count: 64) + ".org"],
+    ["domain": Array(repeating: String(repeating: "a", count: 63), count: 4).joined(separator: ".")],
     ["credential_id_list": []], ["credential_id_list": ["AQID", "AQID"]],
     ["credential_id_list": Array(repeating: "AQID", count: 65)],
     ["credential_id_list": ["AQ-D"]], ["credential_id_list": ["AR=="]],
@@ -85,9 +90,18 @@ func fixtureAssertion(uv: Bool = true, raw: Bool = false) -> Assertion {
   ] {
     #expect(throws: (any Error).self) {
       let decoded = try decodeWire(challengeFixture(changes), as: Challenge.self, phase: 1)
-      try decoded.data.validate(rp: "example.org")
+      try decoded.data.validate()
     }
   }
+}
+
+@Test(arguments: ["lab.wya.tt", "login.other.net", "EXAMPLE.ORG"])
+func assertionMustUseExactKDCProvidedRP(domain: String) throws {
+  let challenge = try decodeWire(challengeFixture(["domain": domain]), as: Challenge.self, phase: 1).data
+  try challenge.validate()
+  #expect(challenge.domain.utf8.elementsEqual(domain.utf8))
+  try fixtureAssertion(domain: domain).validate(challenge: challenge)
+  #expect(throws: WireError.self) { try fixtureAssertion().validate(challenge: challenge) }
 }
 
 @Test func rejectRawMalformedAndUnverifiedAuthdata() throws {

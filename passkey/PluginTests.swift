@@ -39,12 +39,13 @@ private final class Callbacks {
   }
 }
 
-@Test func responderPluginPreservesStateAndRejectsRealmAndReplay() throws {
+@Test(arguments: ["example.org", "login.other.net", "EXAMPLE.ORG"])
+func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: String) throws {
   var profile: profile_t?
   #expect(profile_init(nil, &profile) == 0)
   let p = try #require(profile)
   defer { profile_abandon(p) }
-  for (key, value) in [("realm", "EXAMPLE.ORG"), ("rp", "example.org")] {
+  for (key, value) in [("realm", "EXAMPLE.ORG")] {
     let strings = [strdup("kpasskey")!, strdup(key)!]
     defer { strings.forEach { free($0) } }
     var names = strings.map { Optional(UnsafePointer($0)) } + [nil]
@@ -78,7 +79,7 @@ private final class Callbacks {
   #expect(withUnsafeMutablePointer(to: &vt) { initializePlugin(ctx, 1, 1, OpaquePointer($0)) } == 0)
   let prep = try #require(vt.prep_questions)
   let process = try #require(vt.process)
-  let challenge = try challengeFixture()
+  let challenge = try challengeFixture(["domain": domain])
   try challenge.withUnsafeBytes { bytes in
     var pa = krb5_pa_data()
     pa.pa_type = 153; pa.length = UInt32(bytes.count)
@@ -86,11 +87,12 @@ private final class Callbacks {
     #expect(prep(ctx, nil, nil, nil, &callbacks, rock, &request, nil, nil, &pa) == 0)
     let question = try #require(state.question)
     let original = try decodeWire(question, as: Challenge.self, phase: 1)
+    #expect(original.data.domain.utf8.elementsEqual(domain.utf8))
     #expect(original.state == "opaque-state-é")
     // strcmp at the KDC distinguishes composed/decomposed Unicode even when Swift == does not.
     for replyState in ["stale-state", "opaque-state-e\u{301}", original.state] {
       let valid = replyState.utf8.elementsEqual(original.state.utf8)
-      let reply = try encodeWire(Envelope(phase: 2, state: replyState, data: fixtureAssertion()))
+      let reply = try encodeWire(Envelope(phase: 2, state: replyState, data: fixtureAssertion(domain: domain)))
       free(state.answer)
       state.answer = reply.withUnsafeBytes { strdup($0.baseAddress!.assumingMemoryBound(to: CChar.self)) }
       var output: UnsafeMutablePointer<UnsafeMutablePointer<krb5_pa_data>?>?
@@ -111,7 +113,7 @@ private final class Callbacks {
         // JSON object key order is not part of the protocol.
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        #expect(try encoder.encode(actual.data) == encoder.encode(fixtureAssertion()))
+        #expect(try encoder.encode(actual.data) == encoder.encode(fixtureAssertion(domain: domain)))
       } else { #expect(output == nil) }
     }
     // A prefix match is insufficient: the request's realm must match in full.
@@ -127,7 +129,7 @@ private final class Callbacks {
     (Data(challenge.dropLast()), .framing),
     (Data("passkey {}\0".utf8), .json),
     (try challengeFixture(phase: 2), .phase),
-    (try challengeFixture(["domain": "other.example.org"]), .rpMismatch),
+    (try challengeFixture(["domain": "example.org\0.evil"]), .rpInvalid),
     (try challengeFixture(["user_verification": 2]), .uvPolicy),
     (try challengeFixture(["credential_id_list": []]), .credentials),
     (try challengeFixture(["cryptographic_challenge": "AA=="]), .challengeHash),

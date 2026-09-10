@@ -321,7 +321,7 @@ Acceptance:
   timeout, cancellation, and worker restart. Simulate lockout errors rather
   than deliberately exhausting a user's real key.
 - [x] Parser tests cover invalid phase, malformed/oversized data, bad Base64,
-  wrong hash length, bad framing, and realm/RP mismatch.
+  wrong hash length, bad framing, realm mismatch and malformed RP IDs.
 - [x] Valid and malformed authenticator-data encodings are tested against the
   actual server expectations. Cancellation/failure never publishes new tickets.
 - [ ] End-to-end success is demonstrated without building or shipping SSSD.
@@ -330,7 +330,7 @@ Acceptance:
 
 - `passkey/` implements framing, bounded Codable messages and the MIT clpreauth
   vtable entirely in Swift. The C entry point and callbacks require no shim.
-  It validates FAST availability, callback version, exact realm/RP binding,
+  It validates FAST availability, callback version, exact realm binding, KDC-supplied RP syntax,
   allow-list membership, original state/challenge, CBOR authdata and UP/UV before
   setting the armor reply key and disabling fallback. It owns no device handle,
   prompt, helper process or XPC listener.
@@ -338,7 +338,7 @@ Acceptance:
   production Codable decoder, reproduce the KDC cookie checks, and exercise the
   actual libfido2 authdata decoder and signature verifier with generated P-256
   proofs. Negative tests include malformed framing, phases, Base64, lengths,
-  CBOR/trailing bytes, raw-versus-wrapped authdata, UV and realm/RP mismatch.
+  CBOR/trailing bytes, raw-versus-wrapped authdata, UV, realm mismatch and RP hash mismatch.
   Callback tests exercise a complete responder answer with a null prompter,
   state mismatch, missing armor and unsupported interface versions.
 - `xpc/FIDO.swift` selects from an operation-scoped HID manifest, uses onboard

@@ -21,13 +21,12 @@ struct HarnessMain {
 
       let arguments = Array(CommandLine.arguments.dropFirst())
       if arguments.first == "--passkey" {
-        guard arguments.count == 6, arguments[2] == "--rp", arguments[4] == "--ca" else {
+        guard arguments.count == 4, arguments[2] == "--ca" else {
           throw HarnessError.rejected
         }
         var settings = Configuration(principal: arguments[1])
         settings.mode = .passkey
-        settings.rpID = arguments[3]
-        let certificate = try Data(contentsOf: URL(fileURLWithPath: arguments[5]), options: .mappedIfSafe)
+        let certificate = try Data(contentsOf: URL(fileURLWithPath: arguments[3]), options: .mappedIfSafe)
         guard certificate.count <= 8192 else { throw HarnessError.rejected }
         if let pem = String(data: certificate, encoding: .utf8), pem.hasPrefix("-----BEGIN CERTIFICATE-----") {
           let body = pem.replacingOccurrences(of: "-----BEGIN CERTIFICATE-----", with: "")
@@ -170,7 +169,6 @@ struct HarnessMain {
         }
         var passkey = Configuration(principal: "synthetic@EXAMPLE.INVALID")
         passkey.mode = .passkey
-        passkey.rpID = "example.invalid"
         passkey.pkinitCA = Data([1])
         let passkeyID = try await start("invalidPasskeyTrust", snapshot: Snapshot(configuration: passkey))
         let rejected = try await wait(passkeyID, kind: "terminal")

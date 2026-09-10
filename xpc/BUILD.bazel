@@ -6,6 +6,8 @@ load("//build:artifact.bzl", "pkinit_artifact")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["Worker.plist"])
+# Synthetic public CA used only by tests; its private key is not retained.
+exports_files(["testdata/realm-ca.der"])
 
 # Development opt-in is a build choice, never an environment or XPC message switch.
 config_setting(name = "development_peers", define_values = {"kpasskey_development": "true"})
@@ -78,6 +80,8 @@ swift_test(
     name = "passkey_tests",
     size = "small",
     srcs = ["PasskeyTests.swift"],
+    env = {"KPASSKEY_TEST_CA": "$(rootpath testdata/realm-ca.der)"},
+    data = ["testdata/realm-ca.der"],
     deps = [":contract", ":worker", "//third_party:krb5_swift", "//third_party:libfido2_swift", "//passkey:wire"],
 )
 

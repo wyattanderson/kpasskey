@@ -8,7 +8,7 @@ import Foundation
 // Never attach challenge or credential contents.
 public enum WireError: Int32, Error {
   case invalid = 100_001
-  case framing, json, phase, state, rpMismatch, uvPolicy, credentials, challengeHash
+  case framing, json, phase, state, rpInvalid, uvPolicy, credentials, challengeHash
   case realmMismatch, configuration, armor, callbacks
 }
 public let passkeyQuestion = "org.kpasskey.assertion"
@@ -29,9 +29,14 @@ public struct Challenge: Codable, Sendable {
   public let user_verification: Int
   public let cryptographic_challenge: String
 
-  public func validate(rp: String) throws {
-    guard domain.utf8.elementsEqual(rp.utf8), !domain.isEmpty, domain.utf8.count <= 253,
-      !domain.utf8.contains(0) else { throw WireError.rpMismatch }
+  public func validate() throws {
+    // Use the authenticated KDC's RP verbatim, with bounded DNS syntax and no local mapping.
+    guard !domain.isEmpty, domain.utf8.count <= 253,
+      domain.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ label in
+        !label.isEmpty && label.utf8.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
+          && label.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0)
+            || (97...122).contains($0) || $0 == 45 }
+      }) else { throw WireError.rpInvalid }
     guard [0, 1].contains(user_verification) else { throw WireError.uvPolicy }
     guard (1...64).contains(credential_id_list.count),
       Set(credential_id_list).count == credential_id_list.count else { throw WireError.credentials }

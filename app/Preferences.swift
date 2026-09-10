@@ -22,7 +22,11 @@ final class Preferences {
   @discardableResult
   func save() -> Bool {
     guard configuration.valid else {
-      notice = "Enter a valid account and realm. Security key sign-in also needs a relying party and KDC CA certificate."
+      notice = "Enter a valid account and realm. Security key sign-in also needs a KDC CA certificate."
+      return false
+    }
+    guard configuration.mode != .passkey || configuration.validPKINITCA else {
+      notice = "Choose a valid KDC CA certificate whose subject Organization (O) exactly matches the realm."
       return false
     }
     do {
@@ -36,14 +40,21 @@ final class Preferences {
     do {
       configuration = try Configuration.load(Self.read(url, limit: 8192))
       notice = "Settings imported. Save to keep them."
-    } catch { notice = "Choose a valid KPasskey settings plist without passwords or PINs." }
+    } catch {
+      notice = "Choose a valid KPasskey settings plist without passwords or PINs. For security key sign-in, the CA subject Organization (O) must exactly match the realm."
+    }
   }
 
   func importCertificate(from url: URL) {
     do {
-      configuration.pkinitCA = try Self.certificate(Self.read(url, limit: 8192))
+      var candidate = configuration
+      candidate.pkinitCA = try Self.certificate(Self.read(url, limit: 8192))
+      guard candidate.validPKINITCA else { throw CocoaError(.coderInvalidValue) }
+      configuration.pkinitCA = candidate.pkinitCA
       notice = "KDC CA certificate selected. Save to keep it."
-    } catch { notice = "Choose a valid PEM or DER KDC CA certificate." }
+    } catch {
+      notice = "Choose a valid PEM or DER KDC CA certificate whose subject Organization (O) exactly matches the realm."
+    }
   }
 
   static func certificate(_ bytes: Data) throws -> Data {

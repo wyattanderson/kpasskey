@@ -3,21 +3,21 @@
 `xpc/Configuration.swift` defines the typed authentication configuration. The client
 sends an immutable snapshot; the worker validates it again. Secrets, MIT profile
 text, plugin paths, environment changes and arbitrary cache/file destinations
-are not settings. Passkey RP binding and explicit PKINIT trust are included.
+are not settings. The authenticated KDC supplies the passkey RP; PKINIT trust is explicit.
 
 ## Settings schema
 
 `--settings path.plist` accepts a partial plist that overlays application
-defaults. Unknown top-level keys and invalid types/values fail closed. Managed
+defaults. The retired `rpID` key is discarded when loading older settings and is
+never saved or used. Other unknown top-level keys and invalid types/values fail closed. Managed
 preference ingestion is deferred to the native settings application; the worker
 consumes effective values only.
 
 | Field | Default and supported policy |
 | --- | --- |
 | `schema` | `1`; other schemas rejected |
-| `mode` | `password`; `passkey` requires explicit realm, RP and CA, and disables canonicalization |
-| `rpID` | Empty in password mode; exact lowercase DNS name authorized for the explicit realm in passkey mode |
-| `pkinitCA` | Empty in password mode; DER CA certificate as plist Data, at most 4 KiB, in passkey mode |
+| `mode` | `password`; `passkey` requires explicit realm and CA, and disables canonicalization |
+| `pkinitCA` | Empty in password mode; DER CA certificate as plist Data, at most 4 KiB, with exactly one subject Organization (O) equal to the realm in passkey mode |
 | `principal` | Required; username or `username@REALM`, no product default |
 | `realm` | Empty; optional explicit realm, must agree with a qualified principal |
 | `discoveryDomain` | Empty; optional DNS domain for an unqualified username |
@@ -96,16 +96,28 @@ prompts are not silently answered.
 ## Passkey and FAST
 
 Passkey mode requires an explicit realm, including one from a qualified
-principal. The KDC's RP must equal `rpID` exactly; both request principal realms
-must equal the configured realm in full. DNS discovery may locate KDCs but
-cannot authorize a different RP. Canonicalization/referrals are not exposed in
+principal. Both request principal realms must equal the configured realm in
+full. The RP ID comes exclusively from the authenticated KDC's FAST-protected
+challenge. Canonicalization/referrals are not exposed in
 passkey mode. UV policy comes from the server's integer `user_verification`:
 zero is optional, one is required; other values fail closed.
 
-The harness accepts `--passkey user@REALM --rp example.org --ca /path/to/ca.pem`
+The RP identifies the domain used when enrolling the passkey. It is passed
+unchanged to the authenticator and used to verify the assertion's RP hash.
+The plugin and worker require bounded DNS syntax. There is no local RP setting,
+override, or derivation from the realm or KDC hostname. Trust in the challenge
+comes from PKINIT authentication of the realm's KDC and the required FAST armor.
+
+The harness accepts `--passkey user@REALM --ca /path/to/ca.pem`
 (PEM or DER). It reads the public certificate locally and sends DER bytes; the
 worker does not accept a caller-chosen trust-file path. Partial plists can also
-select this mode. The worker validates the certificate with Security.framework,
+select this mode. Certificate selection, settings loading/saving and the worker
+require the subject's Organization (O) to exactly match the effective realm,
+including case. This follows the FreeIPA subject convention
+`O=REALM,CN=Certificate Authority`; customized subjects without that Organization
+are rejected. Subject matching prevents selecting another realm's CA, but does
+not establish trust by itself: the CA must still come from the administrator.
+The worker validates the certificate with Security.framework,
 writes a PEM copy into a uniquely owned private temporary directory and deletes
 it on ordinary exit. Forced worker termination can leave this public certificate
 in the OS temporary directory; it never contains a private key or credential.

@@ -34,7 +34,7 @@ private func challenge(_ context: krb5_context?, _ request: UnsafeMutablePointer
     guard let pointer = data.data, Data(bytes: pointer, count: Int(data.length)) == Data(realm.utf8)
     else { throw WireError.realmMismatch }
   }
-  try result.data.validate(rp: setting("rp"))
+  try result.data.validate()
   return result
 }
 

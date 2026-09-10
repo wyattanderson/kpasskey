@@ -2,7 +2,6 @@ import CMITKerberos
 import Foundation
 import KPasskeyContract
 import PasskeyWire
-import Security
 
 public struct PasskeyPlugins: Sendable {
   public let passkey: String
@@ -18,20 +17,16 @@ public struct PasskeyPlugins: Sendable {
 }
 
 private final class Responder {
-  let settings: Configuration
   let interaction: PasskeyInteraction
   var failure: Error?
   var answered = false
-  init(_ settings: Configuration, _ interaction: PasskeyInteraction) {
-    self.settings = settings; self.interaction = interaction
-  }
+  init(_ interaction: PasskeyInteraction) { self.interaction = interaction }
 }
 
 /// Armor, trust-file and all MIT allocations are confined to this synchronous operation.
 public func acquirePasskey(_ settings: Configuration, interaction: PasskeyInteraction,
                            plugins: PasskeyPlugins = .bundled()) throws -> TicketMetadata {
-  guard settings.valid, settings.mode == .passkey,
-    SecCertificateCreateWithData(nil, settings.pkinitCA as CFData) != nil
+  guard settings.valid, settings.mode == .passkey, settings.validPKINITCA
   else { throw KerberosFailure(.configurationInvalid) }
   try interaction.gate.check()
   let manager = FileManager.default
@@ -78,7 +73,7 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
   try checked(krb5_cc_new_unique(context, "MEMORY", nil, &staging))
   defer { krb5_cc_destroy(context, staging) }
   try checked(krb5_get_init_creds_opt_set_out_ccache(context, options, staging))
-  let responder = Responder(settings, interaction)
+  let responder = Responder(interaction)
   try checked(krb5_get_init_creds_opt_set_responder(context, options, { context, pointer, rctx in
     guard let pointer, let context, let rctx else { return Int32(KRB5_PREAUTH_FAILED) }
     let state = Unmanaged<Responder>.fromOpaque(pointer).takeUnretainedValue()
@@ -93,7 +88,7 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
       }
       guard !state.answered else { throw KerberosFailure(.passkeyInvalid) }
       let message = try decodeWire(responderBytes(question), as: Challenge.self, phase: 1)
-      try message.data.validate(rp: state.settings.rpID)
+      try message.data.validate()
       let assertion = try getAssertion(message.data, interaction: state.interaction)
       let reply = try encodeWire(Envelope(phase: 2, state: message.state, data: assertion))
       try state.interaction.gate.check()

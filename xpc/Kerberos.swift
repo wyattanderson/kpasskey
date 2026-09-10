@@ -75,7 +75,6 @@ public func makeProfile(_ settings: Configuration, plugin: String? = nil,
       try add(["plugins", "clpreauth", "module"], module + ":" + plugin)
       try add(["plugins", "clpreauth", "enable_only"], module)
       try add(["kpasskey", "realm"], settings.effectiveRealm)
-      try add(["kpasskey", "rp"], settings.rpID)
       if armor {
         guard let anchors else { throw KerberosFailure(.configurationInvalid) }
         try add(["realms", settings.effectiveRealm, "pkinit_anchors"], "FILE:" + anchors)

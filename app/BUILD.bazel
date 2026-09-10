@@ -38,5 +38,7 @@ swift_test(
     name = "preferences_tests",
     size = "small",
     srcs = ["Preferences.swift", "PreferencesTests.swift"],
+    env = {"KPASSKEY_TEST_CA": "$(rootpath //xpc:testdata/realm-ca.der)"},
+    data = ["//xpc:testdata/realm-ca.der"],
     deps = ["//xpc:contract"],
 )

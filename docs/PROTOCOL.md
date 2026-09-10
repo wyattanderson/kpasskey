@@ -60,9 +60,11 @@ challenge is already the hash input expected by this protocol: do not construct
 WebAuthn clientDataJSON or hash it again. [libfido2 assertion setters](https://developers.yubico.com/libfido2/Manuals/fido_assert_set_clientdata_hash.html)
 
 Apply input-size/count limits, exact bounded realm comparisons, strict Base64
-validation, and explicit cleanup. Preserve the existing realm/RP binding intent
-while making its configuration application-owned. A server-provided domain
-must not become authorization to authenticate to an unrelated RP.
+validation, and explicit cleanup. Authenticate the KDC with PKINIT, require FAST,
+and bind both request principal realms to the configured realm. Use the RP ID
+from that KDC's protected challenge unchanged, after bounded DNS syntax validation;
+there is no local RP override or inference from the realm or server hostname.
+Validate the returned authenticator data against the challenge's exact RP hash.
 
 ## Minimal plugin responsibilities
 

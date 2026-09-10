@@ -6,11 +6,41 @@ import KPasskeyWorker
 import PasskeyWire
 import Testing
 
+@Test func certificateSubjectMustMatchRealmBeforeAnyPasskeyInteraction() throws {
+  var settings = Configuration(principal: "user@EXAMPLE.ORG")
+  settings.mode = .passkey
+  let path = try #require(ProcessInfo.processInfo.environment["KPASSKEY_TEST_CA"])
+  settings.pkinitCA = try Data(contentsOf: URL(fileURLWithPath: path))
+  #expect(settings.validPKINITCA)
+  #expect(try Configuration.load(PropertyListEncoder().encode(settings)).validPKINITCA)
+  var legacy = try #require(PropertyListSerialization.propertyList(
+    from: PropertyListEncoder().encode(settings), format: nil) as? [String: Any])
+  #expect(legacy["rpID"] == nil)
+  legacy["rpID"] = "override.invalid"
+  let migrated = try Configuration.load(PropertyListSerialization.data(
+    fromPropertyList: legacy, format: .binary, options: 0))
+  #expect(migrated.principal == settings.principal && migrated.pkinitCA == settings.pkinitCA)
+  let saved = try #require(PropertyListSerialization.propertyList(
+    from: PropertyListEncoder().encode(migrated), format: nil) as? [String: Any])
+  #expect(saved["rpID"] == nil)
+  for realm in ["OTHER.ORG", "EXAMPLE", "EXAMPLE.ORG.EVIL", "example.org", ""] {
+    settings.principal = "user"
+    settings.realm = realm
+    #expect(!settings.validPKINITCA)
+    let bridge = PasskeyInteraction(gate: PublicationGate(), deadline: .now.advanced(by: .seconds(1))) { _, _ in
+      Issue.record("Mismatched trust must be rejected before interaction")
+    }
+    do {
+      _ = try acquirePasskey(settings, interaction: bridge)
+      Issue.record("Mismatched trust was accepted")
+    } catch let error as KerberosFailure { #expect(error.status == .configurationInvalid) }
+  }
+}
+
 @Test func passkeyConfigurationAndModuleIsolation() throws {
   var settings = Configuration(principal: "user@EXAMPLE.ORG")
   settings.mode = .passkey
   #expect(!settings.valid)
-  settings.rpID = "example.org"
   settings.pkinitCA = Data([1])
   #expect(settings.valid) // Certificate syntax is checked separately before PKINIT.
   for armor in [true, false] {
@@ -20,6 +50,10 @@ import Testing
     var value: UnsafeMutablePointer<CChar>?
     #expect(profile_get_string(profile, "plugins", "clpreauth", "enable_only", nil, &value) == 0)
     #expect(value.map { String(cString: $0) } == (armor ? "pkinit" : "kpasskey"))
+    profile_release_string(value)
+    value = nil
+    #expect(profile_get_string(profile, "kpasskey", "rp", nil, nil, &value) == 0)
+    #expect(value == nil)
     profile_release_string(value)
   }
   #expect(throws: KerberosFailure.self) { try makeContext(settings) }
@@ -33,13 +67,10 @@ import Testing
   } catch let error as KerberosFailure { #expect(error.status == .configurationInvalid) }
   settings.canonicalize = true
   #expect(!settings.valid)
-  settings.canonicalize = false
-  settings.rpID = "example.org\0.evil"
-  #expect(!settings.valid)
 }
 
 @Test func deviceErrorsKeepSafeRetryDistinctions() {
-  #expect(authenticationStatus(WireError.rpMismatch.rawValue) == .passkeyInvalid)
+  #expect(authenticationStatus(WireError.rpInvalid.rawValue) == .passkeyInvalid)
   for (code, status): (Int32, Status) in [
     (FIDO_ERR_NO_CREDENTIALS, .wrongKey), (FIDO_ERR_PIN_INVALID, .pinInvalid),
     (FIDO_ERR_PIN_BLOCKED, .pinBlocked), (FIDO_ERR_PIN_AUTH_BLOCKED, .pinAuthBlocked),

@@ -150,7 +150,7 @@ Run both full suites for dependency and release-policy regression coverage.
 After extracting the development harness, real passkey mode is:
 
 ```sh
-KPasskeyHarness.app/Contents/MacOS/KPasskeyHarness --passkey user@REALM --rp example.org --ca /path/to/ca.pem
+KPasskeyHarness.app/Contents/MacOS/KPasskeyHarness --passkey user@REALM --ca /path/to/ca.pem
 ```
 
 Supply an enrolled USB FIDO2 key and the CA that issued the realm's KDC

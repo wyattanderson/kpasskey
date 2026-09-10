@@ -218,7 +218,9 @@ private struct PreferencesView: View {
     Form {
       Section("Account") {
         TextField("Account", text: $preferences.configuration.principal, prompt: Text("user@REALM"))
-        TextField("Realm", text: $preferences.configuration.realm, prompt: Text("From account if included"))
+        TextField("Realm", text: $preferences.configuration.realm,
+                  prompt: Text(preferences.configuration.effectiveRealm.isEmpty
+                    ? "From account if included" : preferences.configuration.effectiveRealm))
         TextField("Discovery domain", text: $preferences.configuration.discoveryDomain,
                   prompt: Text("Optional DNS realm discovery"))
         Picker("Sign in with", selection: $preferences.configuration.mode) {
@@ -227,20 +229,18 @@ private struct PreferencesView: View {
         }
         .onChange(of: preferences.configuration.mode) { _, mode in
           if mode == .password {
-            preferences.configuration.rpID = ""
             preferences.configuration.pkinitCA = Data()
           } else { preferences.configuration.canonicalize = false }
         }
       }
       if preferences.configuration.mode == .passkey {
         Section("Security key") {
-          TextField("Relying party", text: $preferences.configuration.rpID, prompt: Text("example.org"))
           LabeledContent("KDC CA certificate") {
             Text(preferences.configuration.pkinitCA.isEmpty ? "Not selected" : "Selected")
               .foregroundStyle(.secondary)
             Button("Choose…") { chooseFile { preferences.importCertificate(from: $0) } }
           }
-          Text("Use the CA certificate supplied by your realm administrator.")
+          Text("Use your administrator’s CA certificate. Its subject Organization (O) must exactly match the realm.")
             .font(.caption).foregroundStyle(.secondary)
         }
       }
