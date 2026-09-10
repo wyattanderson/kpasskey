@@ -15,8 +15,9 @@ keyboard navigation, VoiceOver labels, and light/dark mode.
 
 Reuse the embedded worker, typed settings, plugin packaging and peer policy.
 Keep interaction and result decisions in the shared client adapter, used by both
-the app and real-authentication console harness. The UI never invokes MIT krb5,
-FIDO, a shell authentication command or an external helper directly. Secrets
+the app and real-authentication console harness. Authentication stays in the
+worker; a read-only MIT cache adapter runs off the main thread for live status.
+The UI never invokes FIDO, a shell authentication command or an external helper. Secrets
 belong only to the current prompt and response; never save them in settings or
 log them. SwiftUI/Foundation/XPC copies prevent a universal erasure guarantee.
 
@@ -41,8 +42,8 @@ selection and deployment targets stay in the build configuration.
 - [x] Persist validated non-secret settings. Offer account, realm, discovery
   domain, authentication mode, RP, CA selection and ticket preference controls.
   Import the existing settings format for explicit KDCs and advanced options.
-- [x] Show the last ticket published in this app session, its principal and expiry.
-  Label this as historical publication metadata; never imply a live cache query.
+- [x] Show shared macOS ticket status, principal, cached authentication method
+  and expiry, including credentials acquired outside this app.
 - [x] Validate the native bundle and shared interaction/settings tests in both
   development and default-policy builds; retain the harness regression suite.
 - [x] Exercise launch, reopen, settings, a password prompt and window-close
@@ -70,10 +71,11 @@ it now checks decoded content while retaining the byte-exact opaque-state check.
 - [ ] Add optional launch at login using ServiceManagement and show the system's
   actual enabled/approval-required state. Default off; remove registration when
   disabled. Recheck behavior after bundle relocation and upgrades.
-- [ ] Add scoped worker queries for ticket status on launch, wake and refresh.
-  Distinguish no ticket, expired ticket, inaccessible cache and disconnected
-  worker. Observe externally removed/replaced credentials without claiming the
-  in-memory last-publication record is current.
+- [x] Read the shared cache on launch, wake, activation and refresh independently
+  of the authentication worker. Observe external cache changes with Apple's
+  Darwin notification and a tolerant safety refresh. Distinguish no ticket,
+  expired ticket and inaccessible cache; update the menu-bar pill at expiry
+  boundaries without rescanning the cache.
 - [ ] Verify window-close, Quit, sleep/wake and fast repeated sign-in behavior.
   Keep cancellation bounded; once publication has committed, its terminal result
   wins over cancellation intent. Transport loss during commit remains unknown.

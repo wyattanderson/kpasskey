@@ -5,6 +5,20 @@ load("//build:artifact.bzl", "pkinit_artifact")
 
 package(default_visibility = ["//visibility:public"])
 
+swift_library(
+    name = "ticket_cache",
+    module_name = "KPasskeyCache",
+    srcs = ["TicketCache.swift"],
+    deps = ["//third_party:krb5_swift"],
+)
+
+swift_test(
+    name = "ticket_cache_tests",
+    size = "small",
+    srcs = ["TicketCacheTests.swift"],
+    deps = [":ticket_cache", "//third_party:krb5_swift"],
+)
+
 exports_files(["Worker.plist"])
 # Synthetic public CA used only by tests; its private key is not retained.
 exports_files(["testdata/realm-ca.der"])

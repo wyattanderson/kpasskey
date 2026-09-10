@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KPasskeyClient
 import KPasskeyContract
+import KPasskeyCache
 import SwiftUI
 
 @main
@@ -34,10 +35,11 @@ struct KPasskeyMain {
 struct KPasskeyApp: App {
   @State private var authentication = Authentication()
   @State private var preferences = Preferences()
+  @State private var tickets = TicketMonitor()
 
   var body: some Scene {
     Window("Sign In — KPasskey", id: "authentication") {
-      AuthenticationView(authentication: authentication, preferences: preferences)
+      AuthenticationView(authentication: authentication, preferences: preferences, tickets: tickets)
         .onDisappear { Task { await authentication.cancel() } }
     }
     .defaultSize(width: 480, height: 480)
@@ -48,8 +50,10 @@ struct KPasskeyApp: App {
           .keyboardShortcut("q")
       }
     }
-    MenuBarExtra("KPasskey", systemImage: "key.horizontal") {
-      AppMenu(authentication: authentication)
+    MenuBarExtra {
+      AppMenu(authentication: authentication, tickets: tickets)
+    } label: {
+      TicketStatusIcon(state: tickets.state, summary: tickets.summary)
     }
     Settings {
       PreferencesView(preferences: preferences, authentication: authentication)
@@ -59,13 +63,17 @@ struct KPasskeyApp: App {
 
 private struct AppMenu: View {
   let authentication: Authentication
+  let tickets: TicketMonitor
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     Text(authentication.isRunning ? authentication.message : "KPasskey")
-    if let ticket = authentication.ticket {
-      Text("Last sign-in: \(ticket.principal)")
+    Text(tickets.summary)
+    ForEach(tickets.tickets) { ticket in
+      Text("\(ticket.principal) — \(ticket.method.rawValue)")
+      Text("\(ticket.state(at: tickets.now).rawValue) · \(ticket.expires.formatted(date: .abbreviated, time: .shortened))")
     }
+    Button("Refresh Tickets") { tickets.refresh() }
     Button(authentication.isRunning ? "Show Sign-In…" : "Sign In…") {
       openWindow(id: "authentication")
       NSApp.activate(ignoringOtherApps: true)
@@ -83,6 +91,7 @@ private struct AppMenu: View {
 private struct AuthenticationView: View {
   @Bindable var authentication: Authentication
   @Bindable var preferences: Preferences
+  let tickets: TicketMonitor
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var windowVisible = false
 
@@ -163,9 +172,7 @@ private struct AuthenticationView: View {
       if !preferences.notice.isEmpty && !authentication.isRunning {
         Text(preferences.notice).font(.callout).foregroundStyle(.secondary)
       }
-      if let ticket = authentication.ticket {
-        TicketView(ticket: ticket)
-      }
+      TicketView(tickets: tickets)
       HStack {
         Spacer()
         if authentication.isRunning {
@@ -191,6 +198,7 @@ private struct AuthenticationView: View {
     .task(id: shouldWatchDevices) {
       if shouldWatchDevices { await authentication.watchDevices() }
     }
+    .onChange(of: authentication.ticket?.cache) { _, _ in tickets.refresh() }
   }
 }
 
@@ -244,24 +252,66 @@ private struct InteractionView: View {
 }
 
 private struct TicketView: View {
-  let ticket: TicketMetadata
+  let tickets: TicketMonitor
 
   var body: some View {
-    GroupBox("Last published ticket") {
+    GroupBox("macOS tickets") {
       VStack(alignment: .leading, spacing: 6) {
-        Text(ticket.principal).fontWeight(.medium).textSelection(.enabled)
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-          let expiry = Date(timeIntervalSince1970: Double(ticket.expires))
-          if expiry <= context.date {
-            Label("Expired", systemImage: "clock.badge.exclamationmark")
-          } else {
-            Text("Expires \(expiry, style: .relative) from now")
+        Text(tickets.summary).fontWeight(.medium)
+        if tickets.error == nil && !tickets.tickets.isEmpty {
+          ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+              ForEach(tickets.tickets) { ticket in
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(ticket.principal).fontWeight(.medium).textSelection(.enabled)
+                  Text(ticket.method.rawValue)
+                  Text(ticket.state(at: tickets.now).rawValue)
+                  Text("Expires \(ticket.expires.formatted(date: .abbreviated, time: .shortened))")
+                    .foregroundStyle(.secondary)
+                }
+              }
+            }.frame(maxWidth: .infinity, alignment: .leading)
           }
+          .frame(height: min(CGFloat(tickets.tickets.count) * 100, 160))
+          Text("Authentication methods come from cache metadata. KDC authentication indicators are encrypted.")
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        Text("Published during this session. Changes made by other apps aren’t monitored.")
-          .font(.caption).foregroundStyle(.secondary)
       }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
     }
+  }
+}
+
+private struct TicketStatusIcon: View {
+  let state: CachedTicket.State
+  let summary: String
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    // A non-template image preserves the pill's color in MenuBarExtra's label.
+    let ink: NSColor = colorScheme == .dark ? .white : .black
+    let pill: NSColor? = switch state {
+    case .password: .systemYellow
+    case .passkey: .systemGreen
+    case .expiring: .systemOrange
+    case .expired: .systemRed
+    case .none, .unavailable: nil
+    }
+    let symbol = NSImage(systemSymbolName: "key.horizontal", accessibilityDescription: nil)?
+      .withSymbolConfiguration(.init(paletteColors: [ink]))
+    let size = symbol?.size ?? NSSize(width: 18, height: 18)
+    let scale = min(18 / size.width, 18 / size.height)
+    let width = size.width * scale, height = size.height * scale
+    let icon = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
+      symbol?.draw(in: NSRect(x: (18 - width) / 2, y: (18 - height) / 2, width: width, height: height))
+      if let pill {
+        pill.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 20, y: 7, width: 4, height: 4)).fill()
+      }
+      return true
+    }
+    Image(nsImage: icon).renderingMode(.original).accessibilityLabel("KPasskey: \(summary)")
+      .help(summary)
   }
 }
 

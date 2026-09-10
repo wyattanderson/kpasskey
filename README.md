@@ -21,9 +21,10 @@ macOS cache publication, validated live with Apple's `klist` and `kgetcred`.
 Milestone 4 adds the Swift passkey plugin, libfido2 adapter, anonymous PKINIT
 armor and harness interactions. Offline validation passes; live passkey login
 and the hardware matrix remain pending in PLAN.md. The first native menu-bar
-app adds sign-in, settings, secure prompts and last-published ticket details.
+app adds sign-in, settings, secure prompts and live shared-cache ticket status,
+including a colored menu-bar badge and cached authentication-method details.
 See [NATIVE_PLAN.md](NATIVE_PLAN.md) for build/run instructions and the remaining
-shortcut, login-item, live ticket monitoring and distribution work.
+shortcut, login-item and distribution work.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after

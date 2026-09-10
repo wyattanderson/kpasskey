@@ -1,14 +1,16 @@
 # Architecture and XPC boundary
 
 The host owns presentation and effective settings. The embedded, unprivileged
-XPC worker owns MIT contexts, blocking authentication, temporary secrets and
+XPC worker owns authentication contexts, blocking authentication, temporary secrets and
 credential publication. The console and native UI share the main-actor
-`WorkerClient` and observable `Authentication` presentation adapter; neither
-calls Kerberos directly. The presentation adapter owns the active operation,
+`WorkerClient` and observable `Authentication` presentation adapter. The presentation adapter owns the active operation,
 prompt consumption, response validation, cancellation intent and terminal result.
 Passwords and PINs are passed directly for one response, never stored in its
-observable state. The native app retains only metadata for the last ticket it
-published; it does not yet query the live cache collection. No global Mach service,
+observable state. The native app also uses a read-only `TicketCache` adapter on
+a utility task to enumerate the shared macOS API cache collection. Native cache
+handles and credential contents stay on that task and are freed after each scan;
+only principal, lifetime and authentication-method metadata reach observable state.
+No global Mach service,
 launch agent, root helper or shell authentication subprocess is installed.
 `XPCService.JoinExistingSession` is explicitly true: GSSCred partitions caches
 by audit session, so a separate worker session would hide its tickets from
@@ -23,7 +25,33 @@ flowchart LR
     K <-->|DNS and Kerberos| D[KDC]
     K --> M[Private MEMORY staging cache]
     M --> A[New shared macOS API cache]
+    H --> R[Read-only cache adapter]
+    R --> A
 ```
+
+The app observes Apple's
+[cache-change notification](https://github.com/apple-oss-distributions/Heimdal/blob/main/lib/heimcred/gsscred.m)
+(`com.apple.Kerberos.cache.changed`), debounces bursts, and allows only one scan
+at a time. It also refreshes on launch, wake, activation and explicit refresh.
+A five-minute timer with tolerance covers lost notifications and service restarts;
+if notification registration fails, the fallback is once a minute. Local one-shot
+timers handle the 15-minute warning and expiry without cache I/O, including while
+menus track. No subprocess, filesystem watch or network request is needed.
+
+Status describes home-realm ticket-granting tickets across all shared API caches;
+service tickets and cache-configuration records do not count as sign-in tickets.
+Private MEMORY/FILE caches and other users' or audit sessions' caches are outside
+this shared collection. The badge prefers a usable passkey TGT, then another
+usable TGT, then the latest expired TGT. A chosen ticket expiring in less than
+15 minutes is orange; otherwise passkey is green and password/unreported is
+yellow. Expired is red, and no TGT has no pill. Read errors or unusable future/
+invalid tickets have no pill and an explicit unavailable status.
+
+MIT's existing TGT-scoped `pa_type` cache entry identifies passkey or password
+preauthentication. Heimdal can omit this entry, so the app labels those tickets
+“Authentication method unreported” and uses yellow. These are local cache hints,
+not verified [KDC authentication indicators](https://www.rfc-editor.org/rfc/rfc8129),
+which are inside the encrypted ticket and unavailable to this cache reader.
 
 The passkey plugin, libfido2 adapter and FAST armor extend the worker in
 milestone 4. Password mode enables only encrypted-timestamp preauthentication

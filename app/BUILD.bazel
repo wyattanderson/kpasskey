@@ -1,14 +1,24 @@
 load("@rules_apple//apple:macos.bzl", "macos_application", "macos_xpc_service")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_test.bzl", "swift_test")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
+cc_library(
+    name = "notifications",
+    hdrs = ["Notifications.h"],
+    aspect_hints = [":notifications_interop"],
+)
+
+swift_interop_hint(name = "notifications_interop", module_name = "CNotifications")
+
 swift_library(
     name = "main",
-    srcs = ["KPasskeyApp.swift", "Preferences.swift", "WindowVisibility.swift"],
+    srcs = ["KPasskeyApp.swift", "Preferences.swift", "TicketMonitor.swift", "WindowVisibility.swift"],
     copts = ["-parse-as-library"],
-    deps = ["//xpc:client", "//xpc:contract"],
+    deps = [":notifications", "//xpc:client", "//xpc:contract", "//xpc:ticket_cache"],
 )
 
 macos_xpc_service(
@@ -32,7 +42,7 @@ macos_application(
         "//passkey:kpasskey": "PlugIns",
         "//xpc:pkinit_plugin": "PlugIns",
     },
-    deps = [":main", "//third_party:krb5"],
+    deps = [":main"],
 )
 
 swift_test(
