@@ -317,8 +317,10 @@ open /tmp/kpasskey-native/KPasskey.app
 The app uses the same worker implementation and bundle contents as the console,
 with native host/service signing identifiers. The shared `Authentication`
 adapter owns presentation and response policy for both real-mode clients.
-Settings persist only validated configuration, including the selected public
-CA certificate; passwords and PINs remain transient.
+Settings changes apply and persist immediately once the configuration is valid,
+including imported settings and the selected public CA certificate. Invalid
+edits show a validation message and leave the last valid configuration on disk;
+passwords and PINs remain transient.
 
 `bazel test --config=development //:native` checks shared presentation/secret
 validation, settings persistence and the relocated native bundle's XPC identity.

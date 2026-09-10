@@ -52,6 +52,7 @@ import Testing
   credentials.server = tgt
   credentials.times.authtime = 1000
   credentials.times.endtime = 2000
+  credentials.ticket_flags = TKT_FLG_RENEWABLE | TKT_FLG_FORWARDABLE
   #expect(krb5_cc_store_cred(ctx, cc, &credentials) == 0)
   for (value, expected) in [("153", CachedTicket.Method.passkey), ("2", .password),
                              ("138", .password), ("16", .unknown), ("bad", .unknown)] {
@@ -66,16 +67,52 @@ import Testing
       #expect(tickets.first?.principal == "user@EXAMPLE.INVALID")
       #expect(tickets.first?.starts == Date(timeIntervalSince1970: 1000))
       #expect(tickets.first?.expires == Date(timeIntervalSince1970: 2000))
+      #expect(tickets.first?.renewable == true)
+      #expect(tickets.first?.forwardable == true)
     }
   }
   // Heimdal kinit commonly has no pa_type entry. Replacement must clear the old method.
   #expect(krb5_cc_initialize(ctx, cc, client) == 0)
   #expect(krb5_cc_store_cred(ctx, cc, &credentials) == 0)
   #expect(try TicketCache.read(context: ctx, cache: cc).first?.method == .unknown)
+  let selected = try #require(TicketCache.read(context: ctx, cache: cc).first)
   var service: krb5_principal?
   #expect(krb5_parse_name(ctx, "host/server@EXAMPLE.INVALID", &service) == 0)
   defer { krb5_free_principal(ctx, service) }
   credentials.server = service
   #expect(krb5_cc_store_cred(ctx, cc, &credentials) == 0)
   #expect(try TicketCache.read(context: ctx, cache: cc).count == 1)
+
+  var unrelated: krb5_ccache?
+  #expect(krb5_cc_new_unique(ctx, "MEMORY", nil, &unrelated) == 0)
+  let other = try #require(unrelated)
+  defer { krb5_cc_destroy(ctx, other) }
+  #expect(krb5_cc_initialize(ctx, other, client) == 0)
+  credentials.server = tgt
+  credentials.ticket_flags = 0
+  #expect(krb5_cc_store_cred(ctx, other, &credentials) == 0)
+  let otherTicket = try #require(TicketCache.read(context: ctx, cache: other).first)
+  #expect(!otherTicket.renewable && !otherTicket.forwardable)
+
+  // A stale row must not destroy a cache whose TGT has been replaced.
+  let stale = CachedTicket(cache: selected.cache, principal: selected.principal,
+    starts: selected.starts, expires: selected.expires.addingTimeInterval(-1), method: selected.method)
+  #expect(throws: CacheReadFailure.self) { try TicketCache.destroy(stale) }
+  #expect(try TicketCache.read(context: ctx, cache: cc).first == selected)
+  try TicketCache.destroy(selected)
+  #expect(try TicketCache.read(context: ctx, cache: cc).isEmpty)
+  #expect(try TicketCache.read(context: ctx, cache: other) == [otherTicket])
+  // A missing cache must not stop the batch; duplicate rows must not destroy twice.
+  #expect(TicketCache.destroyAll([selected, otherTicket, otherTicket]) == [selected.cache])
+  #expect(try TicketCache.read(context: ctx, cache: other).isEmpty)
+  #expect(TicketCache.destroyAll([]).isEmpty)
+}
+
+@Test func cacheActionsRequireExplicitSafeNames() {
+  for name in ["", "API:", "MEMORY:", "FILE:/tmp/unrelated", "API:cache\0other"] {
+    let ticket = CachedTicket(cache: name, principal: "user@EXAMPLE.INVALID",
+      starts: .distantPast, expires: .distantFuture, method: .unknown)
+    #expect(throws: CacheReadFailure.self) { try TicketCache.destroy(ticket) }
+    #expect(throws: CacheReadFailure.self) { try TicketCache.verboseDetails(cache: name) }
+  }
 }

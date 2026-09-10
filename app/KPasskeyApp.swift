@@ -42,7 +42,7 @@ struct KPasskeyApp: App {
       AuthenticationView(authentication: authentication, preferences: preferences, tickets: tickets)
         .onDisappear { Task { await authentication.cancel() } }
     }
-    .defaultSize(width: 480, height: 480)
+    .defaultSize(width: 560, height: 560)
     .windowResizability(.contentSize)
     .commands {
       CommandGroup(replacing: .appTermination) {
@@ -101,26 +101,27 @@ private struct AuthenticationView: View {
     VStack(alignment: .leading, spacing: 20) {
       HStack(spacing: 14) {
         Image(systemName: "key.horizontal.fill")
-          .font(.largeTitle).foregroundStyle(.tint).accessibilityHidden(true)
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Sign in to your realm").font(.title2.bold())
-          Text("Use your account to get a Kerberos ticket.").foregroundStyle(.secondary)
-        }
+          .font(.system(size: 32)).foregroundStyle(.white)
+          .frame(width: 64, height: 64)
+          .background(.blue.gradient, in: RoundedRectangle(cornerRadius: 14))
+          .accessibilityHidden(true)
+        Text(preferences.configuration.effectiveRealm.isEmpty
+          ? "Sign in to your realm" : "Sign in to realm \(preferences.configuration.effectiveRealm)")
+          .font(.title2.bold())
       }
-      TextField("Account", text: $preferences.configuration.principal,
-                prompt: Text("user@REALM"))
-        .textFieldStyle(.roundedBorder)
-        .disabled(authentication.isRunning)
       HStack {
-        Label(preferences.configuration.mode == .passkey ? "Security keys" : "Password",
-              systemImage: preferences.configuration.mode == .passkey ? "key" : "lock")
+        Text(preferences.configuration.principal.isEmpty
+          ? "Set your account in Settings" : preferences.configuration.principal)
+          .font(.title3).textSelection(.enabled)
         Spacer()
         SettingsLink { Text("Settings…") }
-      }.foregroundStyle(.secondary)
+      }.padding(.horizontal, 16)
       if preferences.configuration.mode == .passkey {
+        Text("Available Security Keys").font(.headline).padding(.leading, 16)
         ScrollView {
-          VStack(spacing: 8) {
+          VStack(spacing: 0) {
             ForEach(authentication.devices) { device in
+              if device.id != authentication.devices.first?.id { Divider().padding(.horizontal, 12) }
               Button {
                 authentication.selectedDevice = device.id
               } label: {
@@ -133,16 +134,15 @@ private struct AuthenticationView: View {
                   } else {
                     Image(systemName: "key").frame(width: 28, height: 36).accessibilityHidden(true)
                   }
-                  Text(device.name).multilineTextAlignment(.leading).lineLimit(2)
+                  Text(device.name).font(.title3).multilineTextAlignment(.leading).lineLimit(2)
                   Spacer()
                   Image(systemName: authentication.selectedDevice == device.id
                     ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(authentication.selectedDevice == device.id ? Color.accentColor : .secondary)
                     .accessibilityHidden(true)
                 }
-                .padding(10)
+                .padding(.horizontal, 12).padding(.vertical, 6)
                 .contentShape(Rectangle())
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
               }
               .buttonStyle(.plain)
               .disabled(authentication.isRunning)
@@ -150,20 +150,35 @@ private struct AuthenticationView: View {
               .help(device.name)
               .transition(.opacity.combined(with: .move(edge: .top)))
             }
-          }
+          }.background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
         }
-        .frame(height: CGFloat(min(authentication.devices.count, 4) * 64 - (authentication.devices.isEmpty ? 0 : 8)))
+        .frame(height: CGFloat(min(authentication.devices.count, 4) * 49))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: authentication.devices)
         if !authentication.deviceNotice.isEmpty {
           Text(authentication.deviceNotice).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
-      Divider()
-      HStack(alignment: .top, spacing: 12) {
+      HStack(spacing: 12) {
         if authentication.isRunning { ProgressView().controlSize(.small) }
         Text(authentication.message).textSelection(.enabled)
           .accessibilityLabel("Sign-in status: \(authentication.message)")
+        Spacer()
+        if authentication.isRunning {
+          Button("Cancel", role: .cancel) { Task { await authentication.cancel() } }
+            .keyboardShortcut(.cancelAction)
+            .disabled(authentication.cancelling)
+        } else {
+          Button("Sign In") {
+            guard preferences.validate() else { return }
+            Task { await authentication.start(preferences.configuration) }
+          }
+          .keyboardShortcut(.defaultAction)
+          .buttonStyle(.borderedProminent)
+          .tint(.blue)
+          .disabled(preferences.configuration.mode == .passkey
+            && !authentication.devices.contains { $0.id == authentication.selectedDevice })
+        }
       }
       if let prompt = authentication.prompt {
         InteractionView(authentication: authentication, prompt: prompt)
@@ -172,27 +187,12 @@ private struct AuthenticationView: View {
       if !preferences.notice.isEmpty && !authentication.isRunning {
         Text(preferences.notice).font(.callout).foregroundStyle(.secondary)
       }
+      Divider().padding(.horizontal, 16)
       TicketView(tickets: tickets)
-      HStack {
-        Spacer()
-        if authentication.isRunning {
-          Button("Cancel", role: .cancel) { Task { await authentication.cancel() } }
-            .keyboardShortcut(.cancelAction)
-            .disabled(authentication.cancelling)
-        } else {
-          Button("Sign In") {
-            guard preferences.save() else { return }
-            Task { await authentication.start(preferences.configuration) }
-          }
-          .keyboardShortcut(.defaultAction)
-          .buttonStyle(.borderedProminent)
-          .disabled(preferences.configuration.mode == .passkey
-            && !authentication.devices.contains { $0.id == authentication.selectedDevice })
-        }
-      }
     }
     .padding(24)
-    .frame(width: 480)
+    .frame(width: 560)
+    .background(Color(nsColor: .windowBackgroundColor))
     .background(WindowVisibility { windowVisible = $0 })
     .onDisappear { windowVisible = false }
     .task(id: shouldWatchDevices) {
@@ -253,31 +253,152 @@ private struct InteractionView: View {
 
 private struct TicketView: View {
   let tickets: TicketMonitor
+  @State private var destroyingAll = false
+  @State private var failure: String?
 
   var body: some View {
-    GroupBox("macOS tickets") {
-      VStack(alignment: .leading, spacing: 6) {
-        Text(tickets.summary).fontWeight(.medium)
-        if tickets.error == nil && !tickets.tickets.isEmpty {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-              ForEach(tickets.tickets) { ticket in
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(ticket.principal).fontWeight(.medium).textSelection(.enabled)
-                  Text(ticket.method.rawValue)
-                  Text(ticket.state(at: tickets.now).rawValue)
-                  Text("Expires \(ticket.expires.formatted(date: .abbreviated, time: .shortened))")
-                    .foregroundStyle(.secondary)
-                }
-              }
-            }.frame(maxWidth: .infinity, alignment: .leading)
-          }
-          .frame(height: min(CGFloat(tickets.tickets.count) * 100, 160))
-          Text("Authentication methods come from cache metadata. KDC authentication indicators are encrypted.")
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Cached Tickets").font(.headline).padding(.leading, 16)
+      if tickets.error != nil || tickets.tickets.isEmpty {
+        Text(tickets.summary).foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+          .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+      } else {
+        ScrollView {
+          VStack(spacing: 0) {
+            ForEach(tickets.tickets) { ticket in
+              if ticket.id != tickets.tickets.first?.id { Divider().padding(.horizontal, 12) }
+              TicketRow(ticket: ticket, tickets: tickets).disabled(destroyingAll)
+            }
+          }.background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
         }
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
+        .frame(height: min(CGFloat(tickets.tickets.count) * 53, 159))
+      }
+      HStack {
+        Spacer()
+        Button("Destroy All", role: .destructive) {
+          destroyingAll = true
+          let snapshot = tickets.tickets
+          Task {
+            let failures = await Task.detached(priority: .userInitiated) {
+              TicketCache.destroyAll(snapshot)
+            }.value
+            destroyingAll = false
+            if !failures.isEmpty {
+              failure = "Couldn’t destroy \(failures.count) cache(s). They may have changed or become unavailable. Refresh and try again."
+            }
+            tickets.refresh()
+          }
+        }
+        .buttonStyle(.borderedProminent).tint(.red)
+        .disabled(destroyingAll || tickets.loading || tickets.error != nil || tickets.tickets.isEmpty)
+        .help("Destroy all listed caches and their tickets")
+      }.padding(.top, 8)
+    }
+    .alert("Couldn’t destroy all caches", isPresented: Binding(
+      get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+      Button("OK", role: .cancel) { failure = nil }
+    } message: { Text(failure ?? "") }
+  }
+}
+
+private struct TicketRow: View {
+  let ticket: CachedTicket
+  let tickets: TicketMonitor
+  @State private var hovering = false
+  @State private var showingDetails = false
+  @State private var destroying = false
+  @State private var failure: String?
+  @FocusState private var destroyFocused: Bool
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Image(systemName: ticket.method == .passkey ? "key.horizontal" : "questionmark.key.filled")
+        .font(.title2).frame(width: 30).foregroundStyle(.secondary)
+        .accessibilityLabel(ticket.method.rawValue)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(ticket.principal).font(.title3).lineLimit(1).truncationMode(.middle)
+        Text("Expires \(ticket.expires.formatted(date: .abbreviated, time: .shortened))")
+          .font(.callout).foregroundStyle(.secondary)
+      }.help("\(ticket.principal) — \(ticket.state(at: tickets.now).rawValue)")
+      Spacer(minLength: 0)
+      Button("Destroy", role: .destructive) { destroy() }
+        .focused($destroyFocused)
+        .opacity(hovering || destroyFocused || destroying ? 1 : 0)
+        .disabled(destroying)
+        .help("Destroy this cache and all its tickets")
+      HStack(spacing: 4) {
+        if ticket.renewable {
+          Image(systemName: "r.circle").help("Renewable").accessibilityLabel("Renewable")
+        }
+        if ticket.forwardable {
+          Image(systemName: "f.circle").help("Forwardable").accessibilityLabel("Forwardable")
+        }
+      }.foregroundStyle(.secondary)
+      Button { showingDetails = true } label: {
+        Image(systemName: "info.circle").font(.title3).foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Details for \(ticket.principal)")
+      .popover(isPresented: $showingDetails) {
+        TicketDetails(ticket: ticket, destroying: destroying, destroy: destroy)
+      }
+    }
+    .padding(.horizontal, 12).frame(height: 52)
+    .contentShape(Rectangle()).onHover { hovering = $0 }
+    .alert("Couldn’t destroy cache", isPresented: Binding(
+      get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+      Button("OK", role: .cancel) { failure = nil }
+    } message: { Text(failure ?? "") }
+  }
+
+  private func destroy() {
+    guard !destroying else { return }
+    destroying = true
+    Task {
+      let result = await Task.detached(priority: .userInitiated) {
+        Result { try TicketCache.destroy(ticket) }
+      }.value
+      destroying = false
+      switch result {
+      case .success: showingDetails = false
+      case .failure: failure = "The cache may have changed or become unavailable. Refresh and try again."
+      }
+      tickets.refresh()
+    }
+  }
+}
+
+private struct TicketDetails: View {
+  let ticket: CachedTicket
+  let destroying: Bool
+  let destroy: () -> Void
+  @State private var details = "Reading ticket details…"
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(ticket.principal).font(.headline).textSelection(.enabled)
+      ScrollView([.horizontal, .vertical]) {
+        Text(details).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+      }.defaultScrollAnchor(.topLeading)
+      Text("Authentication: \(ticket.method.rawValue). This is cache metadata, not a KDC assertion.")
+        .font(.caption).foregroundStyle(.secondary)
+      HStack {
+        Text("Destroy removes this cache and all its tickets.").font(.caption).foregroundStyle(.secondary)
+        Spacer()
+        Button("Destroy", role: .destructive, action: destroy).disabled(destroying)
+      }
+    }
+    .padding(20).frame(width: 600, height: 420)
+    .task(id: ticket.id) {
+      let result = await Task.detached(priority: .utility) {
+        Result { try TicketCache.verboseDetails(cache: ticket.cache) }
+      }.value
+      guard !Task.isCancelled else { return }
+      switch result {
+      case .success(let text): details = text
+      case .failure: details = "Couldn’t read details. The cache may have been removed."
+      }
     }
   }
 }
@@ -361,7 +482,6 @@ private struct PreferencesView: View {
         Text("DNS discovers KDCs by default. Import a KPasskey settings plist for explicit servers and advanced ticket options.")
           .font(.caption).foregroundStyle(.secondary)
         if !preferences.notice.isEmpty { Text(preferences.notice).font(.callout) }
-        Button("Save Settings") { preferences.save() }.keyboardShortcut("s")
       }
     }
     .formStyle(.grouped)

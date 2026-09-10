@@ -6,10 +6,15 @@ credential publication. The console and native UI share the main-actor
 `WorkerClient` and observable `Authentication` presentation adapter. The presentation adapter owns the active operation,
 prompt consumption, response validation, cancellation intent and terminal result.
 Passwords and PINs are passed directly for one response, never stored in its
-observable state. The native app also uses a read-only `TicketCache` adapter on
+observable state. The native app also uses a `TicketCache` adapter on
 a utility task to enumerate the shared macOS API cache collection. Native cache
 handles and credential contents stay on that task and are freed after each scan;
-only principal, lifetime and authentication-method metadata reach observable state.
+only principal, lifetime, flags and authentication-method metadata reach observable state.
+The main window groups security keys and cached ticket-granting tickets in settings-style
+rows. Ticket details invoke the system `klist --verbose` for the explicitly named cache.
+Destroy removes that cache and its service tickets through the cache API after checking
+that the displayed ticket still matches. Both operations run off the main actor.
+Destroy All applies the same checks once per listed cache and reports partial failures.
 No global Mach service,
 launch agent, root helper or shell authentication subprocess is installed.
 `XPCService.JoinExistingSession` is explicitly true: GSSCred partitions caches
@@ -25,7 +30,7 @@ flowchart LR
     K <-->|DNS and Kerberos| D[KDC]
     K --> M[Private MEMORY staging cache]
     M --> A[New shared macOS API cache]
-    H --> R[Read-only cache adapter]
+    H --> R[Cache adapter]
     R --> A
 ```
 
@@ -36,7 +41,7 @@ at a time. It also refreshes on launch, wake, activation and explicit refresh.
 A five-minute timer with tolerance covers lost notifications and service restarts;
 if notification registration fails, the fallback is once a minute. Local one-shot
 timers handle the 15-minute warning and expiry without cache I/O, including while
-menus track. No subprocess, filesystem watch or network request is needed.
+menus track. Monitoring needs no subprocess, filesystem watch or network request.
 
 Status describes home-realm ticket-granting tickets across all shared API caches;
 service tickets and cache-configuration records do not count as sign-in tickets.

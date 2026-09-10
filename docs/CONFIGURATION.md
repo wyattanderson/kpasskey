@@ -111,7 +111,7 @@ comes from PKINIT authentication of the realm's KDC and the required FAST armor.
 The harness accepts `--passkey user@REALM --ca /path/to/ca.pem`
 (PEM or DER). It reads the public certificate locally and sends DER bytes; the
 worker does not accept a caller-chosen trust-file path. Partial plists can also
-select this mode. Certificate selection, settings loading/saving and the worker
+select this mode. Certificate selection, settings import/persistence and the worker
 require the subject's Organization (O) to exactly match the effective realm,
 including case. This follows the FreeIPA subject convention
 `O=REALM,CN=Certificate Authority`; customized subjects without that Organization

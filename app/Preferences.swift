@@ -5,7 +5,9 @@ import Security
 
 @MainActor @Observable
 final class Preferences {
-  var configuration = Configuration(principal: "")
+  var configuration = Configuration(principal: "") {
+    didSet { apply() }
+  }
   var notice = ""
   private let defaults: UserDefaults
   private static let key = "configuration"
@@ -15,12 +17,12 @@ final class Preferences {
     configuration.mode = .passkey
     if let saved = defaults.data(forKey: Self.key) {
       do { configuration = try Configuration.load(saved) }
-      catch { notice = "Saved settings couldn’t be read. Review and save your settings again." }
+      catch { notice = "Settings couldn’t be read. Review your settings." }
     }
   }
 
   @discardableResult
-  func save() -> Bool {
+  func validate() -> Bool {
     guard configuration.valid else {
       notice = "Enter a valid account and realm. Security key sign-in also needs a KDC CA certificate."
       return false
@@ -29,17 +31,20 @@ final class Preferences {
       notice = "Choose a valid KDC CA certificate whose subject Organization (O) exactly matches the realm."
       return false
     }
+    notice = ""
+    return true
+  }
+
+  private func apply() {
+    guard validate() else { return }
     do {
       defaults.set(try PropertyListEncoder().encode(configuration), forKey: Self.key)
-      notice = "Settings saved."
-      return true
-    } catch { notice = "Settings couldn’t be saved."; return false }
+    } catch { notice = "Settings couldn’t be retained. Try changing them again." }
   }
 
   func importSettings(from url: URL) {
     do {
       configuration = try Configuration.load(Self.read(url, limit: 8192))
-      notice = "Settings imported. Save to keep them."
     } catch {
       notice = "Choose a valid KPasskey settings plist without passwords or PINs. For security key sign-in, the CA subject Organization (O) must exactly match the realm."
     }
@@ -51,7 +56,6 @@ final class Preferences {
       candidate.pkinitCA = try Self.certificate(Self.read(url, limit: 8192))
       guard candidate.validPKINITCA else { throw CocoaError(.coderInvalidValue) }
       configuration.pkinitCA = candidate.pkinitCA
-      notice = "KDC CA certificate selected. Save to keep it."
     } catch {
       notice = "Choose a valid PEM or DER KDC CA certificate whose subject Organization (O) exactly matches the realm."
     }

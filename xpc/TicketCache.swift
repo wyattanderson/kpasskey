@@ -16,13 +16,17 @@ public struct CachedTicket: Equatable, Identifiable, Sendable {
   public let starts: Date
   public let expires: Date
   public let invalid: Bool
+  public let renewable: Bool
+  public let forwardable: Bool
   public let method: Method
   public var id: String { cache + "|" + principal }
 
   public init(cache: String, principal: String, starts: Date, expires: Date,
-              invalid: Bool = false, method: Method) {
+              invalid: Bool = false, method: Method,
+              renewable: Bool = false, forwardable: Bool = false) {
     self.cache = cache; self.principal = principal; self.starts = starts
     self.expires = expires; self.invalid = invalid; self.method = method
+    self.renewable = renewable; self.forwardable = forwardable
   }
 
   public func state(at now: Date) -> State {
@@ -52,10 +56,73 @@ public struct CachedTicket: Equatable, Identifiable, Sendable {
 
 public struct CacheReadFailure: Error { public let code: Int32 }
 
-/// Handles never leave the calling thread. No network requests or cache writes.
+/// Handles never leave the calling thread. Reads never change the cache or contact a KDC.
 public enum TicketCache {
   private static func check(_ code: Int32) throws {
     if code != 0 { throw CacheReadFailure(code: code) }
+  }
+
+  /// Attempt each displayed cache once, returning failures without skipping later caches.
+  public static func destroyAll(_ tickets: [CachedTicket]) -> [String] {
+    var visited: Set<String> = []
+    var failures: [String] = []
+    for ticket in tickets where visited.insert(ticket.cache).inserted {
+      do { try destroy(ticket) }
+      catch { failures.append(ticket.cache) }
+    }
+    return failures
+  }
+
+  /// Destroy only the explicitly selected cache, rejecting a stale presentation snapshot.
+  public static func destroy(_ ticket: CachedTicket) throws {
+    try validateName(ticket.cache)
+    var context: krb5_context?
+    try check(krb5_init_secure_context(&context))
+    guard let context else { throw CacheReadFailure(code: -1) }
+    defer { krb5_free_context(context) }
+    var cache: krb5_ccache?
+    try check(krb5_cc_resolve(context, ticket.cache, &cache))
+    guard let cache else { throw CacheReadFailure(code: -1) }
+    var destroying = false
+    defer { if !destroying { krb5_cc_close(context, cache) } }
+    guard try read(context: context, cache: cache).contains(ticket) else {
+      throw CacheReadFailure(code: Int32(KRB5_CC_NOTFOUND))
+    }
+    destroying = true
+    try check(krb5_cc_destroy(context, cache))
+    // The upstream macOS backend discards CCAPI's destroy error; verify removal.
+    var remaining: krb5_ccache?
+    try check(krb5_cc_resolve(context, ticket.cache, &remaining))
+    guard let remaining else { throw CacheReadFailure(code: -1) }
+    defer { krb5_cc_close(context, remaining) }
+    var principal: krb5_principal?
+    let code = krb5_cc_get_principal(context, remaining, &principal)
+    defer { krb5_free_principal(context, principal) }
+    guard code == KRB5_FCC_NOFILE || code == KRB5_CC_NOTFOUND else {
+      throw CacheReadFailure(code: code == 0 ? -1 : code)
+    }
+  }
+
+  /// Use the system's own verbose presentation, including service tickets and cache metadata.
+  public static func verboseDetails(cache: String) throws -> String {
+    try validateName(cache)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/klist")
+    process.arguments = ["--verbose", "--cache=\(cache)"]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    try check(process.terminationStatus)
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  private static func validateName(_ name: String) throws {
+    // MEMORY caches support isolated tests; never resolve an empty/default or filesystem cache.
+    guard let prefix = ["API:", "MEMORY:"].first(where: { name.hasPrefix($0) }),
+      name.count > prefix.count, !name.utf8.contains(0) else { throw CacheReadFailure(code: -1) }
   }
 
   public static func read() throws -> [CachedTicket] {
@@ -121,7 +188,9 @@ public enum TicketCache {
       result.append(CachedTicket(cache: cacheName, principal: String(cString: principal!),
         starts: Date(timeIntervalSince1970: Double(start)),
         expires: Date(timeIntervalSince1970: Double(credentials.times.endtime)),
-        invalid: credentials.ticket_flags & TKT_FLG_INVALID != 0, method: method))
+        invalid: credentials.ticket_flags & TKT_FLG_INVALID != 0, method: method,
+        renewable: credentials.ticket_flags & TKT_FLG_RENEWABLE != 0,
+        forwardable: credentials.ticket_flags & TKT_FLG_FORWARDABLE != 0))
     }
     return Dictionary(grouping: result, by: \.id).values.compactMap {
       $0.max { $0.expires < $1.expires }
