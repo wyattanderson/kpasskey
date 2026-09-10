@@ -35,8 +35,8 @@ implementation shim is needed.
 ## Wire contract
 
 `WorkerProtocol.exchange(_:reply:)` and `ClientProtocol.receive(_:)` exchange
-immutable `Message: NSObject, NSSecureCoding` envelopes. Protocol version 3
-negotiates `fake,password,passkey`; older peers are rejected. The negotiation reply
+immutable `Message: NSObject, NSSecureCoding` envelopes. The protocol
+negotiates `fake,password,passkey,devices`; older peers are rejected. The negotiation reply
 includes the verified worker PID for process-boundary tests. Fake success never
 claims a credential exists.
 
@@ -44,6 +44,7 @@ claims a credential exists.
 | --- | --- |
 | `negotiate` / `negotiated` | Version and capabilities, required before start |
 | `start` / `ack` | New UUID and immutable `Snapshot`; acknowledgment only |
+| `devices` / `devices` | Connection-scoped inventory with opaque IDs, sanitized names and allow-listed image names |
 | `progress` | Operation ID, contiguous sequence and start, armor, authentication, touch or onboard verification stage |
 | `interaction` | Operation ID, fresh interaction UUID, stage and remaining milliseconds |
 | `respond` / `ack` | Matching IDs and a stage-specific response |
@@ -73,6 +74,35 @@ valid UTF-8, at least four Unicode scalars, and at most 63 bytes. Touch/onboard
 UV are progress events; the device completes them. The console's hidden read
 also stops on terminal outcomes, restoring terminal settings promptly.
 
+The native sign-in window refreshes the libfido2 manifest while visible in passkey
+mode. AppKit window occlusion notifications cancel polling when the window is
+closed, minimized, hidden, off the active Space, or fully covered; becoming visible
+starts an immediate refresh. A scan already in flight may finish after hiding,
+but its cancelled UI task discards the result and schedules no further scans.
+Rows retain identity across scans, animate insertion/removal, and prefer
+a newly attached key while idle. The selected opaque ID is included in the
+operation snapshot and resolved inside that worker connection. Removing it never
+redirects authentication to a different key. The console retains its operation
+manifest menu when it supplies no preselection.
+
+Discovery runs off the main actor. Metadata reads finish before a new native
+operation starts; scans during authentication only enumerate, without opening
+devices. USB manufacturer/product strings are the fallback label. YubiKey metadata
+is read once per attachment using the read-only CTAPHID management command used by
+Yubico's `yubikit.management`. Known form factors, NFC support and product families
+drive the name and image mapping from `yubikit.support` and Yubico Authenticator's
+`lib/widgets/product_image.dart`. Unknown or unreadable metadata keeps the USB label.
+This metadata is cosmetic and establishes no authentication trust. Product images,
+Apache license and attribution are included in the app bundle; adapted manager
+naming rules carry their separate BSD notice.
+
+libfido2 provides enumeration but no public hotplug subscription or vendor-command
+API. The visible window uses bounded manifest polling. The bundled static library's
+`fido_tx`/`fido_rx` transport routines supply vendor-command framing through the
+declarations in `third_party/swift/libfido2.h`. Those internal signatures must be
+verified on dependency upgrades. All executable adapter logic is Swift; no custom
+USB framing, Python helper, or C implementation shim is introduced.
+
 UUIDs must use canonical uppercase representation. Unused fields must be empty
 or zero. Limits are UTF-8 bytes: kinds 32, IDs 36, text values 256. Sequences
 are nonnegative; remaining time is 0–30,000 ms. Only start may carry settings;
@@ -85,7 +115,9 @@ The secure object graph is `Message`, `Snapshot`, `NSString`, `NSData` and
 `NSArray` (device labels only);
 callbacks omit Snapshot. Typed configuration and ticket metadata are encoded
 inside bounded binary plists (8 KiB and 4 KiB) and decoded with Codable, then
-validated. There are no arbitrary object dictionaries, NSError payloads,
+validated. Device inventories are also bounded binary plists (8 KiB), limited to
+sixteen entries with canonical UUIDs, 128-byte labels and allow-listed icon names.
+There are no arbitrary object dictionaries, NSError payloads,
 filesystem destinations, native pointers, session keys or raw tickets in the
 protocol. These semantic limits do not bound Foundation's transient allocation
 of hostile archives before decoding; transport limits and peer trust also apply.

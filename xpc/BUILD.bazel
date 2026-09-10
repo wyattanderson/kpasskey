@@ -15,7 +15,7 @@ config_setting(name = "development_peers", define_values = {"kpasskey_developmen
 swift_library(
     name = "contract",
     module_name = "KPasskeyContract",
-    srcs = ["Contract.swift", "Configuration.swift", "PeerPolicy.swift"],
+    srcs = ["Contract.swift", "Configuration.swift", "PeerPolicy.swift", "Devices.swift"],
     defines = select({":development_peers": ["DEVELOPMENT_PEERS"], "//conditions:default": []}),
 )
 
@@ -36,7 +36,7 @@ swift_test(
 swift_library(
     name = "worker",
     module_name = "KPasskeyWorker",
-    srcs = ["Session.swift", "Kerberos.swift", "Passkey.swift", "FIDO.swift"],
+    srcs = ["Session.swift", "Kerberos.swift", "Passkey.swift", "FIDO.swift", "DeviceDiscovery.swift"],
     deps = [":contract", "//third_party:krb5_swift", "//third_party:libfido2_swift", "//passkey:wire"],
 )
 

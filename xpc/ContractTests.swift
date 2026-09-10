@@ -4,6 +4,29 @@ import KPasskeyWorker
 import Security
 import Testing
 
+@Test @MainActor func deviceInventoryIsBoundedAndSelectionIsConnectionScoped() throws {
+  let key = SecurityKey(id: UUID().uuidString, name: "Security Key NFC", icon: "sky3")
+  let message = Message("devices", devices: [key])
+  let data = try NSKeyedArchiver.archivedData(withRootObject: message, requiringSecureCoding: true)
+  let decoded = try #require(try NSKeyedUnarchiver.unarchivedObject(ofClass: Message.self, from: data))
+  #expect(decoded.devices == [key])
+  #expect(!Message("devices", devices: [key, key]).bounded)
+  #expect(!message.validCommand)
+  #expect(Message("devices").validCommand)
+  #expect(!Message("devices", value: "/dev/arbitrary").validCommand)
+  var configuration = Configuration(principal: "user@EXAMPLE.ORG")
+  configuration.mode = .passkey
+  configuration.pkinitCA = Data([1])
+  let snapshot = Snapshot(configuration: configuration, selectedDevice: key.id)
+  let snapshotData = try NSKeyedArchiver.archivedData(withRootObject: snapshot, requiringSecureCoding: true)
+  #expect(try NSKeyedUnarchiver.unarchivedObject(ofClass: Snapshot.self, from: snapshotData)?.selectedDevice == key.id)
+  #expect(!Snapshot(configuration: configuration, selectedDevice: "/dev/arbitrary").valid)
+  let session = WorkerSession { _ in }
+  _ = session.handle(Message("negotiate"))
+  #expect(session.handle(Message("start", operation: UUID().uuidString, snapshot: snapshot)).value == "deviceRemoved")
+  session.disconnect()
+}
+
 @Test func secureCodingAndValidation() throws {
   let original = Message("start", operation: UUID().uuidString, snapshot: Snapshot())
   let data = try NSKeyedArchiver.archivedData(withRootObject: original, requiringSecureCoding: true)

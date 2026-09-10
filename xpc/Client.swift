@@ -20,6 +20,7 @@ public final class WorkerClient {
   private var connection: NSXPCConnection?
   private var generation = UUID()
   private var ready = false
+  public var isConnected: Bool { ready }
   private var pending: [UUID: CheckedContinuation<Message, any Error>] = [:]
   private var operations: [String: (sequence: Int, mode: String?)] = [:]
   private var deadlines: [String: Task<Void, Never>] = [:]
@@ -57,7 +58,7 @@ public final class WorkerClient {
     // launchd throttles a service restart after a crash; negotiation allows that delay.
     let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
     guard generation == token else { throw ClientFailure(status: .disconnected) }
-    guard reply.kind == "negotiated", reply.version == 3, reply.value == "fake,password,passkey",
+    guard reply.kind == "negotiated", reply.version == 4, reply.value == "fake,password,passkey,devices",
       reply.sequence > 0, reply.sequence <= Int(Int32.max), reply.sequence != Int(getpid())
     else {
       close(.protocolViolation)
@@ -107,6 +108,15 @@ public final class WorkerClient {
     return try await exchange(Message("cancel", operation: operation))
   }
 
+  public func devices() async throws -> [SecurityKey] {
+    guard ready else { throw ClientFailure(status: .disconnected) }
+    let reply = try await exchange(Message("devices"))
+    guard reply.kind == "devices" else {
+      throw ClientFailure(status: Status(rawValue: reply.value) ?? .protocolViolation)
+    }
+    return reply.devices
+  }
+
   /// Also used by the harness's malformed-wire checks. Normal callers use the typed methods above.
   public func exchange(_ message: Message, timeout: Duration = .seconds(5)) async throws -> Message
   {
@@ -131,12 +141,13 @@ public final class WorkerClient {
       proxy.exchange(message) { [weak self] reply in
         Task { @MainActor in
           guard let self, self.generation == token else { return }
-          guard reply.bounded, reply.version == 3, reply.secret == nil, reply.ticket == nil, reply.choices.isEmpty,
+          guard reply.bounded, reply.version == 4, reply.secret == nil, reply.ticket == nil, reply.choices.isEmpty,
             reply.errorCode == 0,
             reply.operation == message.operation, reply.interaction.isEmpty,
             reply.snapshot == nil, reply.remainingMilliseconds == 0,
-            (reply.kind == "negotiated" && message.kind == "negotiate")
-              || (reply.kind == "ack" && reply.sequence == 0
+            (reply.kind == "devices" && message.kind == "devices" && reply.sequence == 0 && reply.value.isEmpty)
+              || (reply.kind == "negotiated" && message.kind == "negotiate" && reply.devices.isEmpty)
+              || (reply.kind == "ack" && reply.sequence == 0 && reply.devices.isEmpty
                 && Status(rawValue: reply.value) != nil)
           else {
             self.close(.protocolViolation)
@@ -163,7 +174,7 @@ public final class WorkerClient {
     guard let operation = operations[event.operation] else { return }
     let interactions = operation.mode == "passkey" ? ["selectDevice", "pin"]
       : operation.mode == "password" ? ["password"] : ["selectKey", "touch"]
-    guard event.bounded, event.version == 3, event.snapshot == nil, event.secret == nil,
+    guard event.bounded, event.version == 4, event.devices.isEmpty, event.snapshot == nil, event.secret == nil,
       (event.kind == "terminal" || (event.ticket == nil && event.errorCode == 0)),
       (event.ticket == nil || (event.kind == "terminal" && event.value == "ok")),
       (event.kind != "terminal" || event.value != "ok" || event.ticket?.mode == operation.mode),

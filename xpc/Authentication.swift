@@ -14,6 +14,10 @@ public final class Authentication {
   public private(set) var message = "Ready to sign in."
   public private(set) var sending = false
   public private(set) var cancelling = false
+  public private(set) var devices: [SecurityKey] = []
+  public var selectedDevice: String?
+  public private(set) var deviceNotice = "Looking for security keys…"
+  @ObservationIgnored private var connectionTask: Task<Void, any Error>?
   @ObservationIgnored private let client: WorkerClient
   @ObservationIgnored private var connected = false
   public var isRunning: Bool { operation != nil }
@@ -32,12 +36,51 @@ public final class Authentication {
     let id = UUID().uuidString
     prepare(id)
     do {
-      try await client.connect()
+      try await connect()
       guard operation == id else { return }
       connected = true
-      let ack = try await client.start(Snapshot(configuration: configuration), operation: id)
+      let ack = try await client.start(Snapshot(configuration: configuration,
+        selectedDevice: configuration.mode == .passkey ? selectedDevice ?? "" : ""), operation: id)
       if ack.value != "ok" { fail(ack.value, operation: id) }
     } catch { fail(error, operation: id) }
+  }
+
+  private func connect() async throws {
+    if client.isConnected { return }
+    if let connectionTask { try await connectionTask.value; return }
+    let task = Task { try await client.connect() }
+    connectionTask = task
+    defer { connectionTask = nil }
+    try await task.value
+  }
+
+  /// SwiftUI cancels this task when the sign-in window is not visible or password mode is selected.
+  public func watchDevices() async {
+    do {
+      try await connect()
+      while !Task.isCancelled {
+        let keys = try await client.devices()
+        try Task.checkCancellation()
+        updateDevices(keys)
+        // ponytail: half-second manifest polling while visible; use IOKit notifications if power/latency warrants it.
+        try await Task.sleep(for: .milliseconds(500))
+      }
+    } catch is CancellationError {
+    } catch {
+      updateDevices([])
+      deviceNotice = "Couldn’t refresh security keys. Reopen the sign-in window to retry."
+    }
+  }
+
+  func updateDevices(_ keys: [SecurityKey]) {
+    let inserted = keys.filter { key in !devices.contains { $0.id == key.id } }
+    devices = keys
+    // Insertion suggests intent only while idle; never switch an in-flight authentication.
+    if !isRunning {
+      if let newest = inserted.last { selectedDevice = newest.id }
+      else if !keys.contains(where: { $0.id == selectedDevice }) { selectedDevice = keys.first?.id }
+    }
+    deviceNotice = keys.isEmpty ? "Insert a security key to sign in." : ""
   }
 
   func prepare(_ id: String) {
@@ -47,7 +90,7 @@ public final class Authentication {
     promptDeadline = nil
     sending = false
     cancelling = false
-    connected = false
+    connected = client.isConnected
     message = "Connecting…"
   }
 

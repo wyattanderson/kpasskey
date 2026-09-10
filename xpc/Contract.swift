@@ -24,11 +24,12 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
   public let outcome: String
   public let timeoutMilliseconds: Int
   public let configuration: Configuration?
+  public let selectedDevice: String
 
   public init(
     schema: Int = 1, principal: String = "demo", realm: String = "EXAMPLE.INVALID",
     outcome: String = "success", timeoutMilliseconds: Int = 10_000,
-    configuration: Configuration? = nil
+    configuration: Configuration? = nil, selectedDevice: String = ""
   ) {
     self.schema = schema
     self.principal = principal
@@ -36,10 +37,13 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
     self.outcome = outcome
     self.timeoutMilliseconds = configuration?.timeoutMilliseconds ?? timeoutMilliseconds
     self.configuration = configuration
+    self.selectedDevice = selectedDevice
   }
 
   public var valid: Bool {
     schema == 1 && (configuration?.valid ?? true) && !principal.isEmpty && !realm.isEmpty
+      && (selectedDevice.isEmpty || (configuration?.mode == .passkey
+        && UUID(uuidString: selectedDevice)?.uuidString == selectedDevice))
       && principal.utf8.count <= 256 && realm.utf8.count <= 256
       && ["success", "failure"].contains(outcome)
       && (200...30_000).contains(timeoutMilliseconds)
@@ -63,12 +67,14 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
     self.init(
       schema: coder.decodeInteger(forKey: "schema"), principal: principal, realm: realm,
       outcome: outcome, timeoutMilliseconds: coder.decodeInteger(forKey: "timeout"),
-      configuration: configuration)
+      configuration: configuration,
+      selectedDevice: coder.decodeObject(of: NSString.self, forKey: "selectedDevice") as String? ?? "")
     guard valid else { return nil }
   }
 
   public func encode(with coder: NSCoder) {
     coder.encode(schema, forKey: "schema")
+    coder.encode(selectedDevice as NSString, forKey: "selectedDevice")
     coder.encode(principal as NSString, forKey: "principal")
     coder.encode(realm as NSString, forKey: "realm")
     coder.encode(outcome as NSString, forKey: "outcome")
@@ -95,13 +101,14 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
   public let ticket: TicketMetadata?
   public let errorCode: Int32
   public let choices: [String]
+  public let devices: [SecurityKey]
 
   public init(
-    _ kind: String, version: Int = 3, operation: String = "",
+    _ kind: String, version: Int = 4, operation: String = "",
     interaction: String = "", value: String = "", sequence: Int = 0,
     snapshot: Snapshot? = nil, remainingMilliseconds: Int = 0,
     secret: Data? = nil, ticket: TicketMetadata? = nil, errorCode: Int32 = 0,
-    choices: [String] = []
+    choices: [String] = [], devices: [SecurityKey] = []
   ) {
     self.kind = kind
     self.version = version
@@ -115,6 +122,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     self.ticket = ticket
     self.errorCode = errorCode
     self.choices = choices
+    self.devices = devices
   }
 
   public var bounded: Bool {
@@ -123,6 +131,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       && (snapshot?.valid ?? true)
       && (secret.map { !$0.isEmpty && $0.count <= 4096 && !$0.contains(0) } ?? true)
       && (ticket?.valid ?? true)
+      && devices.count <= 16 && devices.allSatisfy(\.valid)
+      && Set(devices.map(\.id)).count == devices.count
       && choices.count <= 16 && choices.allSatisfy {
         !$0.isEmpty && $0.utf8.count <= 128
           && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
@@ -130,10 +140,10 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
   }
 
   public var validCommand: Bool {
-    guard bounded, choices.isEmpty, sequence == 0, remainingMilliseconds == 0, ticket == nil, errorCode == 0,
+    guard bounded, devices.isEmpty, choices.isEmpty, sequence == 0, remainingMilliseconds == 0, ticket == nil, errorCode == 0,
       secret == nil || kind == "respond" else { return false }
     switch kind {
-    case "negotiate":
+    case "negotiate", "devices":
       return operation.isEmpty && interaction.isEmpty && value.isEmpty && snapshot == nil
     case "start":
       return UUID(uuidString: operation)?.uuidString == operation && interaction.isEmpty
@@ -160,6 +170,14 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       let value = coder.decodeObject(of: NSString.self, forKey: "value") as String?
     else { return nil }
     var ticket: TicketMetadata?
+    var devices: [SecurityKey] = []
+    if coder.containsValue(forKey: "devices") {
+      guard let bytes = coder.decodeObject(of: NSData.self, forKey: "devices") as Data?,
+        bytes.count <= 8192,
+        let decoded = try? PropertyListDecoder().decode([SecurityKey].self, from: bytes)
+      else { return nil }
+      devices = decoded
+    }
     if coder.containsValue(forKey: "ticket") {
       guard let bytes = coder.decodeObject(of: NSData.self, forKey: "ticket") as Data?,
         bytes.count <= 4096,
@@ -174,7 +192,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
       remainingMilliseconds: coder.decodeInteger(forKey: "remainingMilliseconds"),
       secret: coder.decodeObject(of: NSData.self, forKey: "secret") as Data?, ticket: ticket,
       errorCode: coder.decodeInt32(forKey: "errorCode"),
-      choices: coder.decodeObject(of: [NSArray.self, NSString.self], forKey: "choices") as? [String] ?? [])
+      choices: coder.decodeObject(of: [NSArray.self, NSString.self], forKey: "choices") as? [String] ?? [],
+      devices: devices)
     guard bounded else { return nil }
   }
 
@@ -190,6 +209,7 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     coder.encode(secret as NSData?, forKey: "secret")
     coder.encode(errorCode, forKey: "errorCode")
     coder.encode(choices as NSArray, forKey: "choices")
+    if !devices.isEmpty { coder.encode(try! PropertyListEncoder().encode(devices) as NSData, forKey: "devices") }
     if let ticket { coder.encode(try! PropertyListEncoder().encode(ticket) as NSData, forKey: "ticket") }
   }
 }

@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 
 swift_library(
     name = "main",
-    srcs = ["KPasskeyApp.swift", "Preferences.swift"],
+    srcs = ["KPasskeyApp.swift", "Preferences.swift", "WindowVisibility.swift"],
     copts = ["-parse-as-library"],
     deps = ["//xpc:client", "//xpc:contract"],
 )
@@ -27,11 +27,18 @@ macos_application(
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     xpc_services = [":worker_service"],
+    resources = glob(["Resources/*.png"]) + ["//third_party:license_notices"],
     additional_contents = {
         "//passkey:kpasskey": "PlugIns",
         "//xpc:pkinit_plugin": "PlugIns",
     },
     deps = [":main", "//third_party:krb5"],
+)
+
+swift_test(
+    name = "window_visibility_tests",
+    size = "small",
+    srcs = ["WindowVisibility.swift", "WindowVisibilityTests.swift"],
 )
 
 swift_test(

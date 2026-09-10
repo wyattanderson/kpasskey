@@ -335,3 +335,12 @@ relocation behavior. Test Hardened Runtime, Developer ID signing, notarization,
 stapling and Gatekeeper on clean Macs. Publish archives/DMGs, checksums and
 third-party notices on GitHub Releases only after the later release criteria
 in NATIVE_PLAN.md are met.
+
+## Yubico device presentation
+
+The native app bundles attributed Yubico Authenticator product images and their
+Apache license from `third_party/licenses`. Swift naming rules adapted from
+Yubico's manager carry its separate BSD notice there. Device identification uses
+the existing static libfido2 transport routines through declaration-only imports;
+verify `fido_tx`/`fido_rx` against upstream `src/extern.h` when upgrading libfido2.
+This avoids adding a second HID framing implementation or an executable C shim.

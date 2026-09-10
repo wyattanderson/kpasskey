@@ -10,10 +10,12 @@ public final class PasskeyInteraction: @unchecked Sendable {
   private var stopped = false
   public let gate: PublicationGate
   public let deadline: ContinuousClock.Instant
+  public let selectedPath: String?
   private let emit: @Sendable (String, [String]) -> Void
-  public init(gate: PublicationGate, deadline: ContinuousClock.Instant,
+  public init(gate: PublicationGate, deadline: ContinuousClock.Instant, selectedPath: String? = nil,
               emit: @escaping @Sendable (String, [String]) -> Void) {
     self.gate = gate; self.deadline = deadline; self.emit = emit
+    self.selectedPath = selectedPath
   }
   public func respond(_ message: Message) {
     condition.lock(); defer { condition.unlock() }
@@ -76,11 +78,19 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
   guard count > 0 else { throw KerberosFailure(.keyAbsent) }
   let choices = (0..<count).map { index -> String in
     let info = fido_dev_info_ptr(manifestPointer, index)
-    let label = fido_dev_info_product_string(info).map { String(cString: $0) } ?? "FIDO security key"
-    let safe = label.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
-    return "\(index + 1): " + String(String.UnicodeScalarView(safe)).prefix(24)
+    return SecurityKey.label(
+      manufacturer: fido_dev_info_manufacturer_string(info).map { String(cString: $0) } ?? "",
+      product: fido_dev_info_product_string(info).map { String(cString: $0) } ?? "")
   }
-  let selected = count == 1 ? "device-0" : try interaction.ask("selectDevice", choices: choices).value
+  let selected: String
+  if let path = interaction.selectedPath {
+    guard let index = (0..<count).first(where: {
+      fido_dev_info_path(fido_dev_info_ptr(manifestPointer, $0)).map { String(cString: $0) } == path
+    }) else { throw KerberosFailure(.deviceRemoved) }
+    selected = "device-\(index)"
+  } else {
+    selected = count == 1 ? "device-0" : try interaction.ask("selectDevice", choices: choices).value
+  }
   guard let index = (0..<count).first(where: { selected == "device-\($0)" }),
     let path = fido_dev_info_path(fido_dev_info_ptr(manifestPointer, index))
   else { throw KerberosFailure(.protocolViolation) }

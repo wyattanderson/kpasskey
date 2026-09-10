@@ -6,10 +6,14 @@ import KPasskeyContract
 public final class WorkerSession: NSObject, WorkerProtocol {
   // One native operation process-wide, including one draining after cancellation.
   private static var kerberosBusy = false
+  private static var metadataBusy = false
   private var gate: PublicationGate?
   private var nativeWork: Task<Void, Never>?
   private var passkeyInteraction: PasskeyInteraction?
   private var deviceCount = 0
+  private var keys: [DiscoveredKey] = []
+  private var discovery: Task<Message, Never>?
+  private var selectedPath: String?
   private var negotiated = false
   private var connected = true
   private var active: Message?
@@ -31,7 +35,33 @@ public final class WorkerSession: NSObject, WorkerProtocol {
 
   nonisolated public func exchange(_ message: Message, reply: @escaping @Sendable (Message) -> Void)
   {
-    Task { @MainActor in reply(handle(message)) }
+    Task { @MainActor in
+      if message.kind == "devices", message.validCommand, message.version == 4,
+        connected, negotiated {
+        if let discovery { reply(await discovery.value); return }
+        let previous = keys
+        let enrich = !Self.kerberosBusy && !Self.metadataBusy
+        if enrich { Self.metadataBusy = true }
+        let task = Task { @MainActor in
+          let result = await Task.detached { Result { try discoverKeys(previous: previous, enrich: enrich) } }.value
+          if enrich { Self.metadataBusy = false }
+          switch result {
+          case .success(let keys):
+            self.keys = keys
+            return Message("devices", devices: keys.map(\.key))
+          case .failure: return Message("ack", value: Status.deviceFailure.rawValue)
+          }
+        }
+        discovery = task
+        let result = await task.value
+        discovery = nil
+        reply(result)
+      } else {
+        // Complete metadata reads before authentication opens the selected device.
+        if message.kind == "start", let discovery { _ = await discovery.value }
+        reply(handle(message))
+      }
+    }
   }
 
   public func handle(_ message: Message) -> Message {
@@ -39,15 +69,20 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       Message(kind, operation: message.operation, value: status.rawValue)
     }
     guard connected, message.validCommand else { return answer(.protocolViolation) }
-    guard message.version == 3 else { return answer(.unsupportedVersion) }
+    guard message.version == 4 else { return answer(.unsupportedVersion) }
     if message.kind == "negotiate" {
       negotiated = true
-      return Message("negotiated", value: "fake,password,passkey", sequence: Int(getpid()))
+      return Message("negotiated", value: "fake,password,passkey,devices", sequence: Int(getpid()))
     }
     guard negotiated else { return answer(.protocolViolation) }
     switch message.kind {
     case "start":
-      guard active == nil, !Self.kerberosBusy else { return answer(.busy) }
+      guard active == nil, !Self.kerberosBusy, !Self.metadataBusy else { return answer(.busy) }
+      selectedPath = nil
+      if let token = message.snapshot?.selectedDevice, !token.isEmpty {
+        guard let key = keys.first(where: { $0.key.id == token }) else { return answer(.deviceRemoved) }
+        selectedPath = key.path
+      }
       guard used.count < 1024, used.insert(message.operation).inserted else {
         return answer(.protocolViolation)
       }
@@ -112,7 +147,7 @@ public final class WorkerSession: NSObject, WorkerProtocol {
     interaction = ""
     stage = "authenticating"
     event("progress", value: stage)
-    let bridge = PasskeyInteraction(gate: gate, deadline: expires) { [weak self] stage, choices in
+    let bridge = PasskeyInteraction(gate: gate, deadline: expires, selectedPath: selectedPath) { [weak self] stage, choices in
       Task { @MainActor in
         guard let self, self.gate === gate, self.active != nil else { return }
         if ["pin", "selectDevice"].contains(stage) {
@@ -151,6 +186,7 @@ public final class WorkerSession: NSObject, WorkerProtocol {
     active = nil
     interaction = ""
     used.removeAll()
+    keys.removeAll()
   }
 
   private func stop(_ status: Status) {

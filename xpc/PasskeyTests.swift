@@ -37,6 +37,39 @@ import Testing
   }
 }
 
+@Test func yubicoIdentificationAndUntrustedUSBLabels() {
+  func info(form: UInt8, version: [UInt8] = [5, 7, 1], nfc: Bool = true) -> Data {
+    var bytes: [UInt8] = [1, 2, 2, 2, 4, 1, form, 5, 3] + version
+    if nfc { bytes += [13, 2, 2, 2] }
+    return Data([UInt8(bytes.count)] + bytes)
+  }
+  for (form, name, icon): (UInt8, String, String) in [
+    (0x41, "Security Key NFC", "sky3"), (0x43, "Security Key C NFC", "skycnfc"),
+    (1, "YubiKey 5 NFC", "yk5nfc"), (3, "YubiKey 5C NFC", "yk5cnfc"),
+    (2, "YubiKey 5 Nano", "yk5nano"), (4, "YubiKey 5C Nano", "yk5cnano"),
+  ] {
+    let result = yubiKeyIdentity(info(form: form), productID: 0x0402)
+    #expect(result?.name == name)
+    #expect(result?.icon == icon)
+  }
+  #expect(yubiKeyIdentity(info(form: 5, nfc: false), productID: 0x0402)?.name == "YubiKey 5Ci")
+  #expect(yubiKeyIdentity(info(form: 7, nfc: false), productID: 0x0402)?.name == "YubiKey C Bio - FIDO Edition")
+  #expect(yubiKeyIdentity(info(form: 1, version: [5, 1, 0]), productID: 0x0120)?.name == "Security Key NFC")
+  #expect(yubiKeyIdentity(info(form: 0), productID: 0x0402) == nil)
+  #expect(yubiKeyIdentity(info(form: 1, version: [6, 0, 0]), productID: 0x0402) == nil)
+  let valid = info(form: 0x41)
+  for count in 0..<valid.count {
+    #expect(yubiKeyIdentity(Data(valid.prefix(count)), productID: 0x0402) == nil)
+  }
+  #expect(yubiKeyIdentity(Data([3, 4, 2, 1]), productID: 0x0402) == nil)
+  let name = SecurityKey.label(manufacturer: "Yubico", product: "YubiKey FIDO")
+  #expect(name == "Yubico YubiKey FIDO")
+  #expect(SecurityKey.label(manufacturer: "", product: "") == "FIDO security key")
+  let hostile = SecurityKey.label(manufacturer: "Vendor\n\u{202e}", product: String(repeating: "🔑", count: 100))
+  #expect(SecurityKey(id: UUID().uuidString, name: hostile).valid)
+  #expect(!SecurityKey(id: UUID().uuidString, name: name, icon: "../../file").valid)
+}
+
 @Test func passkeyConfigurationAndModuleIsolation() throws {
   var settings = Configuration(principal: "user@EXAMPLE.ORG")
   settings.mode = .passkey

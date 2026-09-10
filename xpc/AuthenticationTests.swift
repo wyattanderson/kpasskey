@@ -2,6 +2,30 @@ import Foundation
 import KPasskeyContract
 import Testing
 
+@Test @MainActor func hotplugSelectionTracksIdentityAndNeverSwitchesActiveAuthentication() {
+  let authentication = Authentication()
+  let first = SecurityKey(id: UUID().uuidString, name: "Same product")
+  let second = SecurityKey(id: UUID().uuidString, name: "Same product")
+  authentication.updateDevices([first])
+  #expect(authentication.selectedDevice == first.id)
+  authentication.updateDevices([first, second])
+  #expect(authentication.selectedDevice == second.id)
+  authentication.selectedDevice = first.id
+  authentication.updateDevices([second, first])
+  #expect(authentication.selectedDevice == first.id)
+  authentication.updateDevices([second])
+  #expect(authentication.selectedDevice == second.id)
+  authentication.prepare(UUID().uuidString)
+  authentication.updateDevices([first])
+  #expect(authentication.selectedDevice == second.id)
+  authentication.receive(Message("terminal", operation: authentication.operation!, value: "deviceRemoved"))
+  authentication.updateDevices([first])
+  #expect(authentication.selectedDevice == first.id)
+  authentication.updateDevices([])
+  #expect(authentication.selectedDevice == nil)
+  #expect(!authentication.deviceNotice.isEmpty)
+}
+
 @Test @MainActor func presentationRejectsStaleEventsAndPreservesPublishedTickets() async {
   let authentication = Authentication()
   let first = UUID().uuidString

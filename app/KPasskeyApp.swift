@@ -15,6 +15,8 @@ struct KPasskeyMain {
         do {
           try await client.connect()
           print("Connected to embedded worker in a separate process: \(client.workerPID != getpid())")
+          let devices = try await client.devices()
+          print("Device inventory available: \(devices.allSatisfy(\.valid))")
           client.disconnect()
           exit(0)
         } catch {
@@ -79,8 +81,12 @@ private struct AppMenu: View {
 }
 
 private struct AuthenticationView: View {
-  let authentication: Authentication
+  @Bindable var authentication: Authentication
   @Bindable var preferences: Preferences
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var windowVisible = false
+
+  private var shouldWatchDevices: Bool { windowVisible && preferences.configuration.mode == .passkey }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
@@ -97,11 +103,53 @@ private struct AuthenticationView: View {
         .textFieldStyle(.roundedBorder)
         .disabled(authentication.isRunning)
       HStack {
-        Label(preferences.configuration.mode == .passkey ? "USB security key" : "Password",
+        Label(preferences.configuration.mode == .passkey ? "Security keys" : "Password",
               systemImage: preferences.configuration.mode == .passkey ? "key" : "lock")
         Spacer()
         SettingsLink { Text("Settings…") }
       }.foregroundStyle(.secondary)
+      if preferences.configuration.mode == .passkey {
+        ScrollView {
+          VStack(spacing: 8) {
+            ForEach(authentication.devices) { device in
+              Button {
+                authentication.selectedDevice = device.id
+              } label: {
+                HStack(spacing: 12) {
+                  if let icon = device.icon,
+                    let url = Bundle.main.url(forResource: icon, withExtension: "png"),
+                    let image = NSImage(contentsOf: url) {
+                    Image(nsImage: image).resizable().scaledToFit()
+                      .frame(width: 28, height: 36).accessibilityHidden(true)
+                  } else {
+                    Image(systemName: "key").frame(width: 28, height: 36).accessibilityHidden(true)
+                  }
+                  Text(device.name).multilineTextAlignment(.leading).lineLimit(2)
+                  Spacer()
+                  Image(systemName: authentication.selectedDevice == device.id
+                    ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(authentication.selectedDevice == device.id ? Color.accentColor : .secondary)
+                    .accessibilityHidden(true)
+                }
+                .padding(10)
+                .contentShape(Rectangle())
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+              }
+              .buttonStyle(.plain)
+              .disabled(authentication.isRunning)
+              .accessibilityAddTraits(authentication.selectedDevice == device.id ? .isSelected : [])
+              .help(device.name)
+              .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+          }
+        }
+        .frame(height: CGFloat(min(authentication.devices.count, 4) * 64 - (authentication.devices.isEmpty ? 0 : 8)))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: authentication.devices)
+        if !authentication.deviceNotice.isEmpty {
+          Text(authentication.deviceNotice).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
       Divider()
       HStack(alignment: .top, spacing: 12) {
         if authentication.isRunning { ProgressView().controlSize(.small) }
@@ -131,11 +179,18 @@ private struct AuthenticationView: View {
           }
           .keyboardShortcut(.defaultAction)
           .buttonStyle(.borderedProminent)
+          .disabled(preferences.configuration.mode == .passkey
+            && !authentication.devices.contains { $0.id == authentication.selectedDevice })
         }
       }
     }
     .padding(24)
     .frame(width: 480)
+    .background(WindowVisibility { windowVisible = $0 })
+    .onDisappear { windowVisible = false }
+    .task(id: shouldWatchDevices) {
+      if shouldWatchDevices { await authentication.watchDevices() }
+    }
   }
 }
 

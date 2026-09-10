@@ -25,10 +25,14 @@ import Testing
   for plugin in ["kpasskey.dylib", "pkinit.so"] {
     #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/PlugIns/" + plugin).path))
   }
+  for resource in ["sky3.png", "skycnfc.png", "yk5cnfc.png", "YUBICO-NOTICE.txt", "YUBIOATH-APACHE-2.0.txt"] {
+    #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/Resources/" + resource).path))
+  }
   let executable = moved.appendingPathComponent("Contents/MacOS/KPasskey")
   if try environment("KPASSKEY_DEVELOPMENT") == "true" {
     let output = try run(executable.path, ["--check-worker"], environment: [:])
     #expect(output.contains("separate process: true"))
+    #expect(output.contains("Device inventory available: true"))
     let imposter = moved.appendingPathComponent("Contents/MacOS/Imposter")
     try manager.copyItem(at: executable, to: imposter)
     try run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", "org.kpasskey.KPasskey",
