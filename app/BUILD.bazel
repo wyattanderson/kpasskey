@@ -16,7 +16,7 @@ swift_interop_hint(name = "notifications_interop", module_name = "CNotifications
 
 swift_library(
     name = "main",
-    srcs = ["KPasskeyApp.swift", "Preferences.swift", "TicketMonitor.swift", "WindowVisibility.swift"],
+    srcs = ["KPasskeyApp.swift", "Preferences.swift", "TicketMonitor.swift", "TicketStatusItem.swift", "WindowVisibility.swift"],
     copts = ["-parse-as-library"],
     deps = [":notifications", "//xpc:client", "//xpc:contract", "//xpc:ticket_cache"],
 )
@@ -43,6 +43,13 @@ macos_application(
         "//xpc:pkinit_plugin": "PlugIns",
     },
     deps = [":main"],
+)
+
+swift_test(
+    name = "ticket_status_item_tests",
+    size = "small",
+    srcs = ["TicketStatusItem.swift", "TicketStatusItemTests.swift"],
+    deps = ["//xpc:ticket_cache"],
 )
 
 swift_test(

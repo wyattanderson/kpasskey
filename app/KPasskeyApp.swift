@@ -3,6 +3,7 @@ import Foundation
 import KPasskeyClient
 import KPasskeyContract
 import KPasskeyCache
+import Observation
 import SwiftUI
 
 @main
@@ -33,13 +34,15 @@ struct KPasskeyMain {
 
 @MainActor
 struct KPasskeyApp: App {
+  @NSApplicationDelegateAdaptor(MenuBarAppDelegate.self) private var appDelegate
   @State private var authentication = Authentication()
   @State private var preferences = Preferences()
   @State private var tickets = TicketMonitor()
+  @State private var menuBar: AppMenu?
 
   var body: some Scene {
     Window("Sign In — KPasskey", id: "authentication") {
-      AuthenticationView(authentication: authentication, preferences: preferences, tickets: tickets)
+      AuthenticationView(authentication: authentication, preferences: preferences, tickets: tickets, menuBar: $menuBar)
         .onDisappear { Task { await authentication.cancel() } }
     }
     .defaultSize(width: 560, height: 560)
@@ -50,48 +53,74 @@ struct KPasskeyApp: App {
           .keyboardShortcut("q")
       }
     }
-    MenuBarExtra {
-      AppMenu(authentication: authentication, tickets: tickets)
-    } label: {
-      TicketStatusIcon(state: tickets.state, summary: tickets.summary)
-    }
     Settings {
       PreferencesView(preferences: preferences, authentication: authentication)
     }
   }
 }
 
-private struct AppMenu: View {
+private final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+@MainActor
+private final class AppMenu: NSObject, NSMenuDelegate {
   let authentication: Authentication
   let tickets: TicketMonitor
-  @Environment(\.openWindow) private var openWindow
+  let status = TicketStatusItem()
+  let showSignIn: () -> Void
+  let showSettings: () -> Void
 
-  var body: some View {
-    Text(authentication.isRunning ? authentication.message : "KPasskey")
-    Text(tickets.summary)
-    ForEach(tickets.tickets) { ticket in
-      Text("\(ticket.principal) — \(ticket.method.rawValue)")
-      Text("\(ticket.state(at: tickets.now).rawValue) · \(ticket.expires.formatted(date: .abbreviated, time: .shortened))")
-    }
-    Button("Refresh Tickets") { tickets.refresh() }
-    Button(authentication.isRunning ? "Show Sign-In…" : "Sign In…") {
-      openWindow(id: "authentication")
-      NSApp.activate(ignoringOtherApps: true)
-    }
-    Divider()
-    SettingsLink { Text("Settings…") }
-      .keyboardShortcut(",")
-      .simultaneousGesture(TapGesture().onEnded { NSApp.activate(ignoringOtherApps: true) })
-    Divider()
-    Button("Quit KPasskey") { authentication.disconnect(); NSApp.terminate(nil) }
-      .keyboardShortcut("q")
+  init(authentication: Authentication, tickets: TicketMonitor,
+       showSignIn: @escaping () -> Void, showSettings: @escaping () -> Void) {
+    self.authentication = authentication
+    self.tickets = tickets
+    self.showSignIn = showSignIn
+    self.showSettings = showSettings
+    super.init()
+    let menu = NSMenu()
+    menu.delegate = self
+    status.item.menu = menu
+    observeTickets()
   }
+
+  private func observeTickets() {
+    withObservationTracking {
+      status.update(state: tickets.state, summary: tickets.summary)
+    } onChange: { [weak self] in
+      Task { @MainActor in self?.observeTickets() }
+    }
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    menu.removeAllItems()
+    menu.addItem(withTitle: authentication.isRunning ? authentication.message : "KPasskey", action: nil, keyEquivalent: "")
+    menu.addItem(withTitle: tickets.summary, action: nil, keyEquivalent: "")
+    for ticket in tickets.tickets {
+      menu.addItem(withTitle: "\(ticket.principal) — \(ticket.method.rawValue)", action: nil, keyEquivalent: "")
+      menu.addItem(withTitle: "\(ticket.state(at: tickets.now).rawValue) · \(ticket.expires.formatted(date: .abbreviated, time: .shortened))", action: nil, keyEquivalent: "")
+    }
+    menu.addItem(withTitle: "Refresh Tickets", action: #selector(refresh), keyEquivalent: "").target = self
+    menu.addItem(withTitle: authentication.isRunning ? "Show Sign-In…" : "Sign In…", action: #selector(signIn), keyEquivalent: "").target = self
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Settings…", action: #selector(settings), keyEquivalent: ",").target = self
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Quit KPasskey", action: #selector(quit), keyEquivalent: "q").target = self
+  }
+
+  @objc private func refresh() { tickets.refresh() }
+  @objc private func signIn() { showSignIn(); NSApp.activate(ignoringOtherApps: true) }
+  @objc private func settings() { showSettings(); NSApp.activate(ignoringOtherApps: true) }
+  @objc private func quit() { authentication.disconnect(); NSApp.terminate(nil) }
 }
 
 private struct AuthenticationView: View {
   @Bindable var authentication: Authentication
   @Bindable var preferences: Preferences
   let tickets: TicketMonitor
+  @Binding var menuBar: AppMenu?
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var windowVisible = false
 
@@ -194,6 +223,12 @@ private struct AuthenticationView: View {
     .frame(width: 560)
     .background(Color(nsColor: .windowBackgroundColor))
     .background(WindowVisibility { windowVisible = $0 })
+    .onAppear {
+      if menuBar == nil {
+        menuBar = AppMenu(authentication: authentication, tickets: tickets,
+          showSignIn: { openWindow(id: "authentication") }, showSettings: { openSettings() })
+      }
+    }
     .onDisappear { windowVisible = false }
     .task(id: shouldWatchDevices) {
       if shouldWatchDevices { await authentication.watchDevices() }
@@ -400,39 +435,6 @@ private struct TicketDetails: View {
       case .failure: details = "Couldn’t read details. The cache may have been removed."
       }
     }
-  }
-}
-
-private struct TicketStatusIcon: View {
-  let state: CachedTicket.State
-  let summary: String
-  @Environment(\.colorScheme) private var colorScheme
-
-  var body: some View {
-    // A non-template image preserves the pill's color in MenuBarExtra's label.
-    let ink: NSColor = colorScheme == .dark ? .white : .black
-    let pill: NSColor? = switch state {
-    case .password: .systemYellow
-    case .passkey: .systemGreen
-    case .expiring: .systemOrange
-    case .expired: .systemRed
-    case .none, .unavailable: nil
-    }
-    let symbol = NSImage(systemSymbolName: "key.horizontal", accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(paletteColors: [ink]))
-    let size = symbol?.size ?? NSSize(width: 18, height: 18)
-    let scale = min(18 / size.width, 18 / size.height)
-    let width = size.width * scale, height = size.height * scale
-    let icon = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
-      symbol?.draw(in: NSRect(x: (18 - width) / 2, y: (18 - height) / 2, width: width, height: height))
-      if let pill {
-        pill.setFill()
-        NSBezierPath(ovalIn: NSRect(x: 20, y: 7, width: 4, height: 4)).fill()
-      }
-      return true
-    }
-    Image(nsImage: icon).renderingMode(.original).accessibilityLabel("KPasskey: \(summary)")
-      .help(summary)
   }
 }
 

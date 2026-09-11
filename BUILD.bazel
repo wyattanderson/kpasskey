@@ -6,7 +6,7 @@ filegroup(
 
 test_suite(
     name = "native",
-    tests = ["//xpc:authentication_tests", "//app:preferences_tests", "//tests:native_app"],
+    tests = ["//xpc:authentication_tests", "//app:preferences_tests", "//app:ticket_status_item_tests", "//tests:native_app"],
 )
 
 test_suite(
