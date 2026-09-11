@@ -31,13 +31,7 @@ final class TicketStatusItem {
   }
 
   func update(state: CachedTicket.State, summary: String) {
-    dot.color = switch state {
-    case .password: .systemYellow
-    case .passkey: .systemGreen
-    case .expiring: .systemOrange
-    case .expired: .systemRed
-    case .none, .unavailable: nil
-    }
+    dot.color = state.statusColor
     dot.isHidden = dot.color == nil
     dot.needsDisplay = true
     item.button?.setAccessibilityLabel("KPasskey: \(summary)")
@@ -47,11 +41,32 @@ final class TicketStatusItem {
   isolated deinit { NSStatusBar.system.removeStatusItem(item) }
 }
 
-private final class StatusDot: NSView {
+extension CachedTicket.State {
+  var statusColor: NSColor? {
+    switch self {
+    case .password: .systemYellow
+    case .passkey: .systemGreen
+    case .expiring: .systemOrange
+    case .expired: .systemRed
+    case .none, .unavailable: nil
+    }
+  }
+}
+
+final class StatusDot: NSView {
   var color: NSColor?
+  var gradient = false
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
   override func draw(_ dirtyRect: NSRect) {
-    color?.setFill()
-    NSBezierPath(ovalIn: bounds).fill()
+    guard let color else { return }
+    let circle = NSBezierPath(ovalIn: bounds)
+    if gradient, let shading = NSGradient(
+      starting: color.blended(withFraction: 0.15, of: .white) ?? color,
+      ending: color.blended(withFraction: 0.10, of: .black) ?? color) {
+      shading.draw(in: circle, angle: -90)
+    } else {
+      color.setFill()
+      circle.fill()
+    }
   }
 }

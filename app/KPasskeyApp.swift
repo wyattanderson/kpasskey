@@ -93,17 +93,14 @@ private final class AppMenu: NSObject, NSMenuDelegate {
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    tickets.updateTime()
     menu.removeAllItems()
-    menu.addItem(withTitle: authentication.isRunning ? authentication.message : "KPasskey", action: nil, keyEquivalent: "")
-    menu.addItem(withTitle: tickets.summary, action: nil, keyEquivalent: "")
-    for ticket in tickets.tickets {
-      menu.addItem(withTitle: "\(ticket.principal) — \(ticket.method.rawValue)", action: nil, keyEquivalent: "")
-      menu.addItem(withTitle: "\(ticket.state(at: tickets.now).rawValue) · \(ticket.expires.formatted(date: .abbreviated, time: .shortened))", action: nil, keyEquivalent: "")
+    for item in ticketMenuItems(tickets.tickets, state: tickets.state, summary: tickets.summary, at: tickets.now) {
+      menu.addItem(item)
     }
     menu.addItem(withTitle: "Refresh Tickets", action: #selector(refresh), keyEquivalent: "").target = self
     menu.addItem(withTitle: authentication.isRunning ? "Show Sign-In…" : "Sign In…", action: #selector(signIn), keyEquivalent: "").target = self
-    menu.addItem(.separator())
-    menu.addItem(withTitle: "Settings…", action: #selector(settings), keyEquivalent: ",").target = self
+    menu.addItem(withTitle: "Settings", action: #selector(settings), keyEquivalent: ",").target = self
     menu.addItem(.separator())
     menu.addItem(withTitle: "Quit KPasskey", action: #selector(quit), keyEquivalent: "q").target = self
   }
@@ -348,7 +345,7 @@ private struct TicketRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: ticket.method == .passkey ? "key.horizontal" : "questionmark.key.filled")
+      Image(systemName: ticket.method.symbolName)
         .font(.title2).frame(width: 30).foregroundStyle(.secondary)
         .accessibilityLabel(ticket.method.rawValue)
       VStack(alignment: .leading, spacing: 2) {

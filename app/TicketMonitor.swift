@@ -68,7 +68,7 @@ final class TicketMonitor {
     }
   }
 
-  private func updateTime() {
+  func updateTime() {
     now = Date()
     transition?.invalidate()
     guard let next = CachedTicket.nextTransition(in: tickets, after: now) else { return }
