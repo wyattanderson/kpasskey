@@ -41,6 +41,8 @@ import Testing
     ticket("future", expires: .distantFuture, starts: now.addingTimeInterval(1)),
     ticket("invalid", expires: .distantFuture, invalid: true),
   ]
+  #expect(hasRefreshableTickets(tickets, at: now))
+  #expect(!hasRefreshableTickets(Array(tickets.dropFirst()), at: now))
   let items = ticketMenuItems(tickets, state: .passkey, summary: "Valid passkey ticket", at: now)
   #expect(items.map(\.title) == ["KPasskey", "Valid passkey ticket", "", "Active Tickets",
                                "passkey@EXAMPLE.INVALID", "unknown@EXAMPLE.INVALID", ""])

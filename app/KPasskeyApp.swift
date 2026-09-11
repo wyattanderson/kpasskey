@@ -98,7 +98,10 @@ private final class AppMenu: NSObject, NSMenuDelegate {
     for item in ticketMenuItems(tickets.tickets, state: tickets.state, summary: tickets.summary, at: tickets.now) {
       menu.addItem(item)
     }
-    menu.addItem(withTitle: "Refresh Tickets", action: #selector(refresh), keyEquivalent: "").target = self
+    let refresh = menu.addItem(withTitle: "Refresh Tickets", action: #selector(refresh), keyEquivalent: "")
+    if hasRefreshableTickets(tickets.tickets, at: tickets.now) {
+        refresh.target = self
+    }
     menu.addItem(withTitle: authentication.isRunning ? "Show Sign-In…" : "Sign In…", action: #selector(signIn), keyEquivalent: "").target = self
     menu.addItem(withTitle: "Settings", action: #selector(settings), keyEquivalent: ",").target = self
     menu.addItem(.separator())

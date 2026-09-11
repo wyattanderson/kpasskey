@@ -5,11 +5,15 @@ extension CachedTicket.Method {
   var symbolName: String { self == .passkey ? "key.horizontal" : "questionmark.key.filled" }
 }
 
+func hasRefreshableTickets(_ tickets: [CachedTicket], at now: Date) -> Bool {
+  tickets.contains { $0.renewable && $0.starts <= now && $0.expires > now && !$0.invalid }
+}
+
 @MainActor
 func ticketMenuItems(_ tickets: [CachedTicket], state: CachedTicket.State,
                      summary: String, at now: Date) -> [NSMenuItem] {
   let title = menuLabel("KPasskey")
-  title.font = .boldSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize + 1)
+  title.font = .boldSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize)
   let dot = StatusDot()
   dot.color = state.statusColor ?? .secondaryLabelColor
   dot.gradient = true
