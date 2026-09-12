@@ -35,6 +35,7 @@ struct KPasskeyMain {
 @MainActor
 struct KPasskeyApp: App {
   @NSApplicationDelegateAdaptor(MenuBarAppDelegate.self) private var appDelegate
+  @Environment(\.openWindow) private var openWindow
   @State private var authentication = Authentication()
   @State private var preferences = Preferences()
   @State private var tickets = TicketMonitor()
@@ -48,11 +49,23 @@ struct KPasskeyApp: App {
     .defaultSize(width: 560, height: 560)
     .windowResizability(.contentSize)
     .commands {
+      CommandGroup(replacing: .appInfo) {
+        Button("About KPasskey") { openWindow(id: "about") }
+      }
       CommandGroup(replacing: .appTermination) {
         Button("Quit KPasskey") { authentication.disconnect(); NSApp.terminate(nil) }
           .keyboardShortcut("q")
       }
     }
+    Window("About KPasskey", id: "about") {
+      AboutView()
+    }
+    .defaultSize(width: 360, height: 260)
+    .windowResizability(.contentSize)
+    Window("Licenses", id: "licenses") {
+      LicensesView()
+    }
+    .defaultSize(width: 700, height: 560)
     Settings {
       PreferencesView(preferences: preferences, authentication: authentication)
     }
@@ -70,13 +83,16 @@ private final class AppMenu: NSObject, NSMenuDelegate {
   let status = TicketStatusItem()
   let showSignIn: () -> Void
   let showSettings: () -> Void
+  let showAbout: () -> Void
 
   init(authentication: Authentication, tickets: TicketMonitor,
-       showSignIn: @escaping () -> Void, showSettings: @escaping () -> Void) {
+       showSignIn: @escaping () -> Void, showSettings: @escaping () -> Void,
+       showAbout: @escaping () -> Void) {
     self.authentication = authentication
     self.tickets = tickets
     self.showSignIn = showSignIn
     self.showSettings = showSettings
+    self.showAbout = showAbout
     super.init()
     let menu = NSMenu()
     menu.delegate = self
@@ -104,6 +120,7 @@ private final class AppMenu: NSObject, NSMenuDelegate {
     }
     menu.addItem(withTitle: authentication.isRunning ? "Show Sign-In…" : "Sign In…", action: #selector(signIn), keyEquivalent: "").target = self
     menu.addItem(withTitle: "Settings", action: #selector(settings), keyEquivalent: ",").target = self
+    menu.addItem(withTitle: "About KPasskey", action: #selector(about), keyEquivalent: "").target = self
     menu.addItem(.separator())
     menu.addItem(withTitle: "Quit KPasskey", action: #selector(quit), keyEquivalent: "q").target = self
   }
@@ -111,6 +128,7 @@ private final class AppMenu: NSObject, NSMenuDelegate {
   @objc private func refresh() { tickets.refresh() }
   @objc private func signIn() { showSignIn(); NSApp.activate(ignoringOtherApps: true) }
   @objc private func settings() { showSettings(); NSApp.activate(ignoringOtherApps: true) }
+  @objc private func about() { showAbout(); NSApp.activate(ignoringOtherApps: true) }
   @objc private func quit() { authentication.disconnect(); NSApp.terminate(nil) }
 }
 
@@ -159,7 +177,7 @@ private struct AuthenticationView: View {
               } label: {
                 HStack(spacing: 12) {
                   if let icon = device.icon,
-                    let url = Bundle.main.url(forResource: icon, withExtension: "png"),
+                    let url = Bundle.main.url(forResource: icon, withExtension: "png", subdirectory: "icons"),
                     let image = NSImage(contentsOf: url) {
                     Image(nsImage: image).resizable().scaledToFit()
                       .frame(width: 28, height: 36).accessibilityHidden(true)
@@ -229,7 +247,8 @@ private struct AuthenticationView: View {
     .onAppear {
       if menuBar == nil {
         menuBar = AppMenu(authentication: authentication, tickets: tickets,
-          showSignIn: { openWindow(id: "authentication") }, showSettings: { openSettings() })
+          showSignIn: { openWindow(id: "authentication") }, showSettings: { openSettings() },
+          showAbout: { openWindow(id: "about") })
       }
     }
     .onDisappear { windowVisible = false }

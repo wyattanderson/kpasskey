@@ -1,10 +1,30 @@
 load("@rules_apple//apple:macos.bzl", "macos_application", "macos_xpc_service")
+load("@rules_apple//apple:resources.bzl", "apple_resource_group")
+load("@rules_apple//apple:versioning.bzl", "apple_bundle_version")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
 load("@rules_swift//swift:swift_library.bzl", "swift_library")
 load("@rules_swift//swift:swift_test.bzl", "swift_test")
-load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
+
+apple_bundle_version(
+    name = "version",
+    build_label_pattern = "KPasskey_{version}_{build}",
+    build_version = "{version}.{build}",
+    capture_groups = {
+        "build": "\\d+",
+        "version": "\\d+\\.\\d+",
+    },
+    fallback_build_label = "KPasskey_0.1_1",
+    short_version_string = "{version}",
+)
+
+apple_resource_group(
+    name = "icons",
+    strip_structured_resources_prefixes = ["Resources"],
+    structured_resources = glob(["Resources/icons/*.png"]),
+)
 
 cc_library(
     name = "notifications",
@@ -12,57 +32,86 @@ cc_library(
     aspect_hints = [":notifications_interop"],
 )
 
-swift_interop_hint(name = "notifications_interop", module_name = "CNotifications")
+swift_interop_hint(
+    name = "notifications_interop",
+    module_name = "CNotifications",
+)
 
 swift_library(
     name = "main",
-    srcs = ["KPasskeyApp.swift", "Preferences.swift", "TicketMenu.swift", "TicketMonitor.swift", "TicketStatusItem.swift", "WindowVisibility.swift"],
+    srcs = [
+        "KPasskeyApp.swift",
+        "Licenses.swift",
+        "Preferences.swift",
+        "TicketMenu.swift",
+        "TicketMonitor.swift",
+        "TicketStatusItem.swift",
+        "WindowVisibility.swift",
+    ],
     copts = ["-parse-as-library"],
-    deps = [":notifications", "//xpc:client", "//xpc:contract", "//xpc:ticket_cache"],
+    deps = [
+        ":notifications",
+        "//xpc:client",
+        "//xpc:contract",
+        "//xpc:ticket_cache",
+    ],
 )
 
 macos_xpc_service(
     name = "worker_service",
-    bundle_name = "Worker",
     bundle_id = "org.kpasskey.KPasskey.worker",
+    bundle_name = "Worker",
     infoplists = ["//xpc:Worker.plist"],
     minimum_os_version = "14.0",
+    version = ":version",
     deps = ["//xpc:worker_main"],
 )
 
 macos_application(
     name = "KPasskey",
-    bundle_name = "KPasskey",
-    bundle_id = "org.kpasskey.KPasskey",
-    infoplists = ["Info.plist"],
-    minimum_os_version = "14.0",
-    xpc_services = [":worker_service"],
-    resources = glob(["Resources/*.png"]) + ["//third_party:license_notices"],
     additional_contents = {
         "//passkey:kpasskey": "PlugIns",
         "//xpc:pkinit_plugin": "PlugIns",
     },
+    bundle_id = "org.kpasskey.KPasskey",
+    bundle_name = "KPasskey",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    resources = [":icons", "//third_party:license_notices"],
+    stamp = 1,
+    version = ":version",
+    xpc_services = [":worker_service"],
     deps = [":main"],
 )
 
 swift_test(
     name = "ticket_status_item_tests",
     size = "small",
-    srcs = ["TicketMenu.swift", "TicketStatusItem.swift", "TicketStatusItemTests.swift"],
+    srcs = [
+        "TicketMenu.swift",
+        "TicketStatusItem.swift",
+        "TicketStatusItemTests.swift",
+    ],
     deps = ["//xpc:ticket_cache"],
 )
 
 swift_test(
     name = "window_visibility_tests",
     size = "small",
-    srcs = ["WindowVisibility.swift", "WindowVisibilityTests.swift"],
+    srcs = [
+        "WindowVisibility.swift",
+        "WindowVisibilityTests.swift",
+    ],
 )
 
 swift_test(
     name = "preferences_tests",
     size = "small",
-    srcs = ["Preferences.swift", "PreferencesTests.swift"],
-    env = {"KPASSKEY_TEST_CA": "$(rootpath //xpc:testdata/realm-ca.der)"},
+    srcs = [
+        "Preferences.swift",
+        "PreferencesTests.swift",
+    ],
     data = ["//xpc:testdata/realm-ca.der"],
+    env = {"KPASSKEY_TEST_CA": "$(rootpath //xpc:testdata/realm-ca.der)"},
     deps = ["//xpc:contract"],
 )
