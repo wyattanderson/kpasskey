@@ -139,12 +139,15 @@ private struct AuthenticationView: View {
           .font(.title2.bold())
       }
       HStack {
+        Text("Principal")
+        Spacer()
         Text(preferences.configuration.principal.isEmpty
           ? "Set your account in Settings" : preferences.configuration.principal)
-          .font(.title3).textSelection(.enabled)
-        Spacer()
-        SettingsLink { Text("Settings…") }
-      }.padding(.horizontal, 16)
+          .foregroundStyle(.secondary).textSelection(.enabled)
+        SettingsLink { Text("Settings") }.buttonStyle(.bordered)
+      }
+      .padding(16)
+      .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
       if preferences.configuration.mode == .passkey {
         Text("Available Security Keys").font(.headline).padding(.leading, 16)
         ScrollView {
@@ -208,7 +211,7 @@ private struct AuthenticationView: View {
           .disabled(preferences.configuration.mode == .passkey
             && !authentication.devices.contains { $0.id == authentication.selectedDevice })
         }
-      }
+      }.padding(.horizontal, 16)
       if let prompt = authentication.prompt {
         InteractionView(authentication: authentication, prompt: prompt)
           .id(prompt.interaction)
@@ -328,7 +331,7 @@ private struct TicketView: View {
         .buttonStyle(.borderedProminent).tint(.red)
         .disabled(destroyingAll || tickets.loading || tickets.error != nil || tickets.tickets.isEmpty)
         .help("Destroy all listed caches and their tickets")
-      }.padding(.top, 8)
+      }.padding(.top, 8).padding(.horizontal, 16)
     }
     .alert("Couldn’t destroy all caches", isPresented: Binding(
       get: { failure != nil }, set: { if !$0 { failure = nil } })) {
