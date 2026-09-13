@@ -120,8 +120,8 @@ private final class AppMenu: NSObject, NSMenuDelegate {
     }
     menu.addItem(withTitle: authentication.isRunning ? "Show Sign-In…" : "Sign In…", action: #selector(signIn), keyEquivalent: "").target = self
     menu.addItem(withTitle: "Settings", action: #selector(settings), keyEquivalent: ",").target = self
-    menu.addItem(withTitle: "About KPasskey", action: #selector(about), keyEquivalent: "").target = self
     menu.addItem(.separator())
+    menu.addItem(withTitle: "About KPasskey", action: #selector(about), keyEquivalent: "").target = self
     menu.addItem(withTitle: "Quit KPasskey", action: #selector(quit), keyEquivalent: "q").target = self
   }
 
