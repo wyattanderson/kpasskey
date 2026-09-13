@@ -1,0 +1,158 @@
+# Releases
+
+Distribute the arm64 application as a ZIP containing `KPasskey.app`. Finder
+extracts it, and the user moves the app into Applications. The existing Bazel
+bundle includes the worker, plugins, libraries, icons, and license notices;
+a DMG would add packaging without needing an installer.
+
+## Build and version
+
+Use Bazelisk, full Xcode, and a complete Git checkout with tags. Tool and
+dependency pins live in `MODULE.bazel`, `.bazelversion`, and the workflow.
+SVU and piñata are checksummed upstream binaries downloaded by Bazel.
+
+```sh
+git fetch origin --tags
+version=$(bazelisk run //:version)
+bazelisk build --embed_label="$version" //:release
+archive=$(bazelisk cquery --embed_label="$version" --output=files //:release)
+bazelisk run //release:prepare -- unsigned "$archive" dist "$version"
+```
+
+`//:release` builds the app ZIP. `--embed_label` stamps the selected tag into
+`CFBundleShortVersionString` and `CFBundleVersion` in both the app and worker.
+The distribution tool rejects a mismatch between either bundle and the release
+version. Unstamped local builds use a zero version. There is no version file
+to update: stable Git tags are authoritative. Prerelease tags are rejected
+because bundle versions use Apple's numeric format.
+
+To bump and create an annotated local tag:
+
+```sh
+bazelisk run //:bump
+```
+
+This uses [SVU](https://github.com/caarlos0/svu) and Conventional Commits:
+`fix:` increments patch, `feat:` increments minor, and breaking changes increment
+major. If the commits do not call for a bump, it fails without creating a tag.
+For an explicit increment, use `bazelisk run //:bump -- patch`, `minor`, or
+`major`. The checkout must be clean and non-shallow. It never pushes; review
+the tag and run the exact `git push origin TAG` command printed by the tool.
+
+## Pipeline without signing credentials
+
+The Release workflow builds on an arm64 macOS runner using Bazelisk and the
+repository's Bazel pin. Branches, pull requests, and manual runs execute the
+tests, verify release-policy rejection of ad-hoc peers, exercise development
+XPC, build the stamped archive, and upload an unsigned ZIP and SHA-256 checksum.
+Unsigned means ad-hoc signed for arm64 execution, without Developer ID or
+notarization. The release XPC policy remains enabled, so this archive is for
+packaging validation and cannot authenticate users.
+
+Pushing a stable version tag also exercises GitHub Release creation. Until
+`RELEASE_SIGNING_ENABLED` is exactly `true`, it creates an **unsigned draft
+prerelease**. Keep it as a draft. Use a new tag for a later signed release;
+existing tags and release assets are never overwritten. Rerunning a tag job
+after it has created its release fails instead of replacing it.
+
+Compilation and tests have read-only repository permissions and no signing
+secrets. Only the tag publishing job has `contents: write` and uses the
+`release` environment. Signing runs through `bazel run`, outside cacheable
+build actions, so private keys do not become Bazel inputs or cached artifacts.
+The workflow's inline shell only connects GitHub environment values to direct
+Bazel/GitHub CLI commands; project-owned release logic is Swift.
+
+## Export the signing identity
+
+1. In Xcode Settings → Accounts, add the Apple Account enrolled in the Developer
+   Program. Select the team, open Manage Certificates, and create a **Developer
+   ID Application** certificate. Apple Development, Apple Distribution, and
+   Developer ID Installer certificates are different certificate types.
+2. In Keychain Access → My Certificates, find that certificate and expand it
+   to confirm its private key is present. Export the certificate **with its
+   private key** as a password-protected `.p12` file. A downloaded `.cer` alone
+   cannot sign an application.
+3. Record the full signing identity shown by
+   `security find-identity -v -p codesigning`, including its team identifier.
+4. At [Apple Account](https://account.apple.com/), create an app-specific
+   password for notarization. Use the enrolled account and its Developer
+   Program Team ID. This is separate from the `.p12` export password and
+   does not require an App Store listing.
+
+The application currently uses no capability that needs a Developer ID
+provisioning profile. No profile, App Store application record, or installer
+certificate is needed for this ZIP distribution.
+
+## Store GitHub secrets
+
+In the repository's Settings → Environments, create `release`. Restrict its
+deployment tags to release tags and configure a required reviewer if available
+for your repository plan. Add these **environment secrets**:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE_BASE64` | Base64 of the exported `.p12`, including its private key |
+| `APPLE_CERTIFICATE_PASSWORD` | The `.p12` export password |
+| `APPLE_SIGNING_IDENTITY` | Full `Developer ID Application: Your Name (TEAMID)` identity |
+| `APPLE_ID` | Apple Account email used for notarization |
+| `APPLE_TEAM_ID` | Developer Program Team ID |
+| `APPLE_APP_PASSWORD` | The app-specific notarization password |
+
+To copy the certificate for the GitHub secret field:
+
+```sh
+base64 -i /path/to/DeveloperID.p12 | pbcopy
+```
+
+Alternatively, with an authenticated GitHub CLI, stream it directly into the
+secret without printing it:
+
+```sh
+base64 -i /path/to/DeveloperID.p12 | gh secret set APPLE_CERTIFICATE_BASE64 --env release
+gh secret set APPLE_CERTIFICATE_PASSWORD --env release
+gh secret set APPLE_SIGNING_IDENTITY --env release
+gh secret set APPLE_ID --env release
+gh secret set APPLE_TEAM_ID --env release
+gh secret set APPLE_APP_PASSWORD --env release
+```
+
+The remaining commands prompt for their values. Keep the `.p12` and passwords
+out of Git and chat. Base64 is an encoding, not encryption; GitHub's secrets
+storage protects the encoded private key. See GitHub's
+[certificate secret instructions](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications).
+
+## Enable signed releases after keyless validation
+
+Once the unsigned workflow is green and the secrets are installed, set the
+`release` environment variable `RELEASE_SIGNING_ENABLED` to `true`. Push a new
+stable version tag created by `//:bump`.
+
+The publish job imports the identity into a temporary keychain, signs the
+bundled libraries and plugins followed by the worker and app, enables Hardened
+Runtime and secure timestamps, and checks the real signed XPC connection.
+It submits the app ZIP to Apple, requires notarization acceptance, staples the
+ticket to the app, validates Gatekeeper acceptance, and creates the final ZIP
+and checksum. The temporary keychain and certificate are removed. Signing or
+notarization failure stops publication; it never falls back to unsigned mode.
+
+ZIP files cannot hold a stapled ticket directly, so the final archive is made
+after stapling the application. See Apple's
+[notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+and [signing requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+The first actual Developer ID/notarization run still needs the real credentials.
+Before distributing to users, test the downloaded archive on a clean supported
+Mac, including offline launch and real authentication; CI does not contact a KDC
+or exercise a physical FIDO key.
+
+## Update action pins
+
+After choosing action versions in the workflow, run:
+
+```sh
+bazelisk run //:pin_actions
+```
+
+This runs [piñata](https://github.com/caarlos0/pinata) over `.github/workflows`,
+replacing action tags with full commit SHAs and preserving version comments.
+Review and commit the resulting workflow diff. Tool updates belong in Bazel's
+dependency configuration, not a separate host package installation.

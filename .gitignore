@@ -9,3 +9,4 @@
 *.keychain-db
 .env
 .env.*
+dist/

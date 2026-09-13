@@ -1,0 +1,48 @@
+load("@rules_swift//swift:swift_binary.bzl", "swift_binary")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
+
+package(default_visibility = ["//visibility:public"])
+
+[
+    swift_binary(
+        name = name,
+        srcs = ["Version.swift", "Process.swift"],
+        copts = ["-parse-as-library"],
+        args = ["$(rootpath " + tool + ")", name],
+        data = [tool],
+    )
+    for name, tool in [
+        ("version", "@svu//:svu"),
+        ("bump", "@svu//:svu"),
+        ("pin_actions", "@pinata//:pinata"),
+    ]
+]
+
+swift_binary(
+    name = "prepare",
+    srcs = ["Prepare.swift", "Process.swift"],
+    copts = ["-parse-as-library"],
+)
+
+swift_test(
+    name = "version_tests",
+    size = "small",
+    srcs = ["VersionTests.swift", "Process.swift"],
+    data = [":bump", ":version", "@svu//:svu"],
+    env = {
+        "BUMP": "$(rootpath :bump)",
+        "VERSION": "$(rootpath :version)",
+        "SVU": "$(rootpath @svu//:svu)",
+    },
+)
+
+swift_test(
+    name = "archive_tests",
+    size = "small",
+    srcs = ["ArchiveTests.swift", "Process.swift"],
+    data = [":prepare", "//app:KPasskey"],
+    env = {
+        "PREPARE": "$(rootpath :prepare)",
+        "APP": "$(rootpath //app:KPasskey)",
+    },
+)

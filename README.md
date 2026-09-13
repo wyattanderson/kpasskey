@@ -9,6 +9,9 @@ Distribution will be a relocatable, Developer ID-signed and notarized `.app`
 bundle published on GitHub Releases. End users must not need Homebrew, a
 terminal, a domain join, or a manually maintained `krb5.conf`.
 
+See [Releasing](docs/RELEASING.md) for the Bazel ZIP target, semantic version
+tags, GitHub Actions pipeline, and Developer ID secret setup.
+
 ## Status
 
 Milestone 1 implements arm64 macOS dependency builds with Bazel, Swift probes

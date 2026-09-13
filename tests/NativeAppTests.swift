@@ -16,13 +16,16 @@ import Testing
   let info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf:
     moved.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any])
   #expect(info["CFBundleIdentifier"] as? String == "org.kpasskey.KPasskey")
-  #expect(info["CFBundleShortVersionString"] as? String == "0.1")
-  #expect(info["CFBundleVersion"] as? String == "0.1.1")
+  let version = try #require(info["CFBundleShortVersionString"] as? String)
+  #expect(version.wholeMatch(of: /[0-9]+\.[0-9]+\.[0-9]+/) != nil)
+  #expect(info["CFBundleVersion"] as? String == version)
   #expect(info["LSUIElement"] as? Bool == true)
   let workerInfo = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf:
     moved.appendingPathComponent("Contents/XPCServices/Worker.xpc/Contents/Info.plist")),
     format: nil) as? [String: Any])
   #expect(workerInfo["CFBundleIdentifier"] as? String == "org.kpasskey.KPasskey.worker")
+  #expect(workerInfo["CFBundleShortVersionString"] as? String == version)
+  #expect(workerInfo["CFBundleVersion"] as? String == version)
   #expect((workerInfo["XPCService"] as? [String: Any])?["JoinExistingSession"] as? Bool == true)
   for plugin in ["kpasskey.dylib", "pkinit.so"] {
     #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/PlugIns/" + plugin).path))

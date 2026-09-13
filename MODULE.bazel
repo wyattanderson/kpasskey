@@ -1,4 +1,4 @@
-module(name = "kpasskey", version = "0.1.0")
+module(name = "kpasskey")
 
 # Register the Apple toolchain ahead of the generic rules_cc toolchain.
 bazel_dep(name = "apple_support", version = "2.8.1")
@@ -30,6 +30,21 @@ use_repo(foreign_tools, "rules_foreign_cc_toolchains")
 register_toolchains("//build:cmake_toolchain", "@rules_foreign_cc_toolchains//:all")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Upstream release tools; no local Go installation is required.
+http_archive(
+    name = "svu",
+    url = "https://github.com/caarlos0/svu/releases/download/v3.4.1/svu_3.4.1_darwin_all.tar.gz",
+    sha256 = "aeec0a735f12d6313c5b4f295ac2f86e00b56571d241abe5aa0306b41f43efd7",
+    build_file_content = 'exports_files(["svu"])',
+)
+
+http_archive(
+    name = "pinata",
+    url = "https://github.com/caarlos0/pinata/releases/download/v0.4.0/pinata_0.4.0_darwin_arm64.tar.gz",
+    sha256 = "8e5c3a690e79493c355636e96404031a3fc57efdcbdc3c64b1eee3a45b8eb9ef",
+    build_file_content = 'exports_files(["pinata"])',
+)
 
 http_archive(
     name = "krb5_src",

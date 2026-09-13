@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+      - name: Test release policy
+        run: bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //...
+      - name: Test development XPC
+        run: bazelisk test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
+      - name: Build stamped release archive
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(bazelisk run --lockfile_mode=error //:version)
+          if [ "$REF_TYPE" = tag ]; then version="$REF_NAME"; fi
+          bazelisk build --lockfile_mode=error --embed_label="$version" //:release
+          archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //:release)
+          bazelisk run --lockfile_mode=error //release:prepare -- unsigned "$archive" dist "$version"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-release
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned-release
+          path: incoming
+      - name: Prepare distribution
+        env:
+          SIGNING_ENABLED: ${{ vars.RELEASE_SIGNING_ENABLED }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          mode=unsigned
+          if [ "$SIGNING_ENABLED" = true ]; then mode=signed; fi
+          bazelisk run --lockfile_mode=error //release:prepare -- "$mode" "incoming/KPasskey-${RELEASE_TAG}-macos-arm64-unsigned.zip" dist "$RELEASE_TAG"
+      - name: Publish release (unsigned builds remain drafts)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          DRAFT: ${{ vars.RELEASE_SIGNING_ENABLED != 'true' }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --draft="$DRAFT" --prerelease="$DRAFT"

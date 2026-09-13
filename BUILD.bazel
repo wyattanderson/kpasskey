@@ -1,3 +1,8 @@
+alias(name = "release", actual = "//app:KPasskey")
+alias(name = "version", actual = "//release:version")
+alias(name = "bump", actual = "//release:bump")
+alias(name = "pin_actions", actual = "//release:pin_actions")
+
 filegroup(
     name = "project_docs",
     srcs = glob(["*.md", "docs/*.md"]),

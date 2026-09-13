@@ -331,12 +331,10 @@ to cover console interactions, dependency closure and plugin loading.
 
 ## Distribution work
 
-Extend the M2 application/XPC bundles with authentication resources and the
-native UI. Preserve their tested resource placement, nested signatures, and
-relocation behavior. Test Hardened Runtime, Developer ID signing, notarization,
-stapling and Gatekeeper on clean Macs. Publish archives/DMGs, checksums and
-third-party notices on GitHub Releases only after the later release criteria
-in NATIVE_PLAN.md are met.
+`//:release` builds the application ZIP. See [RELEASING.md](RELEASING.md) for
+SVU tagging, version stamping, the keyless GitHub Actions workflow, and enabling
+Developer ID signing and notarization. Clean-Mac distribution and real hardware
+acceptance remain part of the release criteria in NATIVE_PLAN.md.
 
 ## Yubico device presentation
 
