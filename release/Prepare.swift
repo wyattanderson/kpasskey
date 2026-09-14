@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 @main struct Prepare {
   static func main() {
@@ -35,7 +36,7 @@ import Foundation
         throw ReleaseError("Bundle version does not match \(args[4]); build with --embed_label=\(args[4])")
       }
     }
-    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], reportOutput: true)
     if signed { try signAndNotarize(app: app, worker: worker, temporary: temporary) }
     try fm.createDirectory(at: output, withIntermediateDirectories: true)
     let archive = output.appendingPathComponent("KPasskey-\(args[4])-macos-arm64\(signed ? "" : "-unsigned").zip")
@@ -53,9 +54,14 @@ import Foundation
     let account = try requiredEnvironment("APPLE_ID")
     let password = try requiredEnvironment("APPLE_APP_PASSWORD")
     let p12Password = try requiredEnvironment("APPLE_CERTIFICATE_PASSWORD")
-    guard identity.hasPrefix("Developer ID Application: "), identity.hasSuffix("(\(team))"),
-      let certificate = Data(base64Encoded: try requiredEnvironment("APPLE_CERTIFICATE_BASE64"), options: .ignoreUnknownCharacters)
-    else { throw ReleaseError("Expected a Developer ID Application identity and a base64 PKCS#12 certificate") }
+    guard identity.hasPrefix("Developer ID Application: ") else {
+      throw ReleaseError("APPLE_SIGNING_IDENTITY must be the full Developer ID Application certificate name")
+    }
+    guard identity.hasSuffix("(\(team))") else {
+      throw ReleaseError("APPLE_TEAM_ID does not match APPLE_SIGNING_IDENTITY")
+    }
+    guard let certificate = Data(base64Encoded: try requiredEnvironment("APPLE_CERTIFICATE_BASE64"), options: .ignoreUnknownCharacters),
+      !certificate.isEmpty else { throw ReleaseError("APPLE_CERTIFICATE_BASE64 must contain a base64 PKCS#12 certificate") }
     let keychain = temporary.appendingPathComponent("signing.keychain-db")
     let p12 = temporary.appendingPathComponent("certificate.p12")
     let keychainPassword = UUID().uuidString
@@ -68,6 +74,18 @@ import Foundation
     try run("/usr/bin/security", ["import", p12.path, "-k", keychain.path, "-P", p12Password, "-T", "/usr/bin/codesign"])
     try run("/usr/bin/security", ["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychainPassword, keychain.path])
     try FileManager.default.removeItem(at: p12)
+
+    // codesign --keychain selects the identity, but its certificate chain is
+    // resolved through the user's search list. Restore that list before cleanup.
+    var originalSearchList: CFArray?
+    var signingKeychain: SecKeychain?
+    guard SecKeychainCopySearchList(&originalSearchList) == errSecSuccess,
+      let originalSearchList,
+      SecKeychainOpen(keychain.path, &signingKeychain) == errSecSuccess,
+      let signingKeychain,
+      SecKeychainSetSearchList((Array(originalSearchList as [AnyObject]) + [signingKeychain]) as CFArray) == errSecSuccess
+    else { throw ReleaseError("Could not add the signing keychain to the user search list") }
+    defer { SecKeychainSetSearchList(originalSearchList) }
 
     // The app's entire dynamic-code closure lives in these two directories.
     // Sign code inside out; --deep is for verification, never for signing.
@@ -82,26 +100,28 @@ import Foundation
     }
     try sign(worker, identity: identity, keychain: keychain)
     try sign(app, identity: identity, keychain: keychain)
-    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], reportOutput: true)
     // Exercises real Developer ID XPC authorization without a KDC or security key.
-    let diagnostic = try run(app.appendingPathComponent("Contents/MacOS/KPasskey").path, ["--check-worker"])
+    let diagnostic = try run(app.appendingPathComponent("Contents/MacOS/KPasskey").path, ["--check-worker"], reportOutput: true)
     guard diagnostic.contains("separate process: true") else { throw ReleaseError("Signed XPC worker check failed") }
     try run("/usr/bin/xcrun", ["notarytool", "store-credentials", "release", "--keychain", keychain.path,
       "--apple-id", account, "--team-id", team, "--password", password])
     let submission = temporary.appendingPathComponent("notarization.zip")
     try run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app.path, submission.path])
+    print("Submitting signed app for notarization")
     let result = try run("/usr/bin/xcrun", ["notarytool", "submit", submission.path,
-      "--keychain", keychain.path, "--keychain-profile", "release", "--wait", "--timeout", "30m", "--output-format", "json"])
+      "--keychain", keychain.path, "--keychain-profile", "release", "--wait", "--timeout", "30m", "--output-format", "json"], reportOutput: true)
     let status = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
-    guard status?["status"] as? String == "Accepted" else { throw ReleaseError("Apple did not accept the notarization submission") }
-    try run("/usr/bin/xcrun", ["stapler", "staple", app.path])
-    try run("/usr/bin/xcrun", ["stapler", "validate", app.path])
-    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
-    try run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=2", app.path])
+    guard status?["status"] as? String == "Accepted" else { throw ReleaseError("Apple did not accept the notarization submission: \(result)") }
+    try run("/usr/bin/xcrun", ["stapler", "staple", app.path], reportOutput: true)
+    try run("/usr/bin/xcrun", ["stapler", "validate", app.path], reportOutput: true)
+    try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], reportOutput: true)
+    try run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=2", app.path], reportOutput: true)
   }
 
   static func sign(_ file: URL, identity: String, keychain: URL) throws {
+    print("Signing \(file.lastPathComponent)")
     try run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain.path,
-      "--options", "runtime", "--timestamp", file.path])
+      "--options", "runtime", "--timestamp", file.path], reportOutput: true)
   }
 }

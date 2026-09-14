@@ -1,6 +1,19 @@
 import Foundation
 import Testing
 
+@Test func commandFailuresHideOutputUnlessExplicitlyEnabled() throws {
+  for reportOutput in [false, true] {
+    do {
+      // A nonexistent path produces a diagnostic containing the supplied marker.
+      try run("/bin/cat", ["/kpasskey-release-secret-marker"], reportOutput: reportOutput)
+      Issue.record("Expected cat to fail")
+    } catch let error as ReleaseError {
+      #expect(error.description.contains("cat failed (1)"))
+      #expect(error.description.contains("kpasskey-release-secret-marker") == reportOutput)
+    }
+  }
+}
+
 @Test func versionBumpUsesSVUAndRejectsUnsafeTags() throws {
   for tag in ["v1.2.3-rc.1", "v01.2.3", "1.2.3", "v1.2.3\n", "v1.2.3/other"] {
     #expect(throws: ReleaseError.self) { try releaseVersion(tag) }
