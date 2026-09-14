@@ -108,7 +108,7 @@ import Security
       "--apple-id", account, "--team-id", team, "--password", password])
     let submission = temporary.appendingPathComponent("notarization.zip")
     try run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app.path, submission.path])
-    print("Submitting signed app for notarization")
+    FileHandle.standardError.write(Data("Submitting signed app for notarization\n".utf8))
     let result = try run("/usr/bin/xcrun", ["notarytool", "submit", submission.path,
       "--keychain", keychain.path, "--keychain-profile", "release", "--wait", "--timeout", "30m", "--output-format", "json"], reportOutput: true)
     let status = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
@@ -120,7 +120,7 @@ import Security
   }
 
   static func sign(_ file: URL, identity: String, keychain: URL) throws {
-    print("Signing \(file.lastPathComponent)")
+    FileHandle.standardError.write(Data("Signing \(file.lastPathComponent)\n".utf8))
     try run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain.path,
       "--options", "runtime", "--timestamp", file.path], reportOutput: true)
   }
