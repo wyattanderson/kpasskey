@@ -1,3 +1,4 @@
+import AppKit
 import BuildTestSupport
 import Foundation
 import Testing
@@ -16,6 +17,8 @@ import Testing
   let info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf:
     moved.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any])
   #expect(info["CFBundleIdentifier"] as? String == "org.kpasskey.KPasskey")
+  let icon = try #require(info["CFBundleIconFile"] as? String)
+  #expect(NSImage(contentsOf: moved.appendingPathComponent("Contents/Resources/" + icon)) != nil)
   let version = try #require(info["CFBundleShortVersionString"] as? String)
   #expect(version.wholeMatch(of: /[0-9]+\.[0-9]+\.[0-9]+/) != nil)
   #expect(info["CFBundleVersion"] as? String == version)

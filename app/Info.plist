@@ -3,6 +3,7 @@
 <plist version="1.0"><dict>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleName</key><string>KPasskey</string>
+  <key>CFBundleIconFile</key><string>AppIcon.icns</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

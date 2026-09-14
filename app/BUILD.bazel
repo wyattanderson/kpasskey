@@ -77,7 +77,7 @@ macos_application(
     bundle_name = "KPasskey",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
-    resources = [":icons", "//third_party:license_notices"],
+    resources = [":icons", "Resources/AppIcon.icns", "//third_party:license_notices"],
     stamp = 1,
     version = ":version",
     xpc_services = [":worker_service"],
