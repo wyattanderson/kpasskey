@@ -42,9 +42,14 @@ the tag and run the exact `git push origin TAG` command printed by the tool.
 ## Pipeline without signing credentials
 
 The Release workflow builds on an arm64 macOS runner using Bazelisk and the
-repository's Bazel pin. Branches, pull requests, and manual runs execute the
-tests, verify release-policy rejection of ad-hoc peers, exercise development
-XPC, build the stamped archive, and upload an unsigned ZIP and SHA-256 checksum.
+repository's Bazel pin. Only version-tag pushes and explicit manual runs start
+CI. Branch pushes and pull requests do not start macOS runners. Validate ordinary
+changes locally; request a manual run when runner-specific behavior needs testing.
+Do not push a release tag just to test workflow edits.
+
+Both triggers execute the tests, verify release-policy rejection of ad-hoc peers,
+exercise development XPC, build the stamped archive, and upload an unsigned ZIP
+and SHA-256 checksum. Manual runs stop there and never publish or use signing secrets.
 Unsigned means ad-hoc signed for arm64 execution, without Developer ID or
 notarization. The release XPC policy remains enabled, so this archive is for
 packaging validation and cannot authenticate users.
@@ -61,6 +66,40 @@ secrets. Only the tag publishing job has `contents: write` and uses the
 build actions, so private keys do not become Bazel inputs or cached artifacts.
 The workflow's inline shell only connects GitHub environment values to direct
 Bazel/GitHub CLI commands; project-owned release logic is Swift.
+
+## Local iteration and explicit CI
+
+Run the same checks as CI locally before spending runner time:
+
+```sh
+bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //...
+bazelisk test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
+```
+
+Use the archive commands above to check packaging. Local Bazel outputs are reused
+between invocations; no separate local cache service is needed.
+
+For an explicit runner check, choose **Actions → Release → Run workflow** and
+select the branch, or use:
+
+```sh
+gh workflow run release.yml --ref YOUR_BRANCH
+```
+
+GitHub requires the workflow file to exist on the default branch before manual
+dispatch is available. Merge the workflow there before using this command.
+
+CI caches Bazelisk downloads, dependency downloads, and Bazel action outputs
+through the pinned setup action. The publishing job restores the build job's
+cache without saving another copy. Signing keys and signed distributions remain
+outside the cache.
+
+GitHub scopes caches by ref: release tags can restore caches from the default
+branch, but cannot restore another tag's cache. An explicit run on the default
+branch seeds reusable outputs for later releases; manual runs on a development
+branch warm that branch. Cache reuse still depends on matching Bazel action
+keys, including the discovered toolchain. See GitHub's
+[cache scope rules](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
 
 ## Export the signing identity
 
@@ -127,6 +166,24 @@ Once the unsigned workflow is green and the secrets are installed, set the
 `release` environment variable `RELEASE_SIGNING_ENABLED` to `true`. Push a new
 stable version tag created by `//:bump`.
 
+To validate signing locally first, set the same six `APPLE_*` environment variables
+listed above in your terminal. For the certificate, use
+`export APPLE_CERTIFICATE_BASE64="$(base64 -i "$HOME/Desktop/Certificates.p12")"`.
+Enter the two passwords privately rather than placing their values in shell
+history. Then build and prepare the signed distribution locally:
+
+```sh
+version=$(bazelisk run //:version)
+bazelisk build --lockfile_mode=error --embed_label="$version" //:release
+archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //:release)
+bazelisk run --lockfile_mode=error //release:prepare -- signed "$archive" dist "$version"
+```
+
+This performs the same signing, XPC validation, notarization, and stapling as CI,
+including the wait for Apple, without using a hosted runner or publishing a
+GitHub release. Use it when signing or packaging changes require a real check;
+ordinary app iteration can use the local tests without another notarization.
+
 The publish job imports the identity into a temporary keychain, signs the
 bundled libraries and plugins followed by the worker and app, enables Hardened
 Runtime and secure timestamps, and checks the real signed XPC connection.
@@ -139,10 +196,19 @@ ZIP files cannot hold a stapled ticket directly, so the final archive is made
 after stapling the application. See Apple's
 [notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 and [signing requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
-The first actual Developer ID/notarization run still needs the real credentials.
 Before distributing to users, test the downloaded archive on a clean supported
 Mac, including offline launch and real authentication; CI does not contact a KDC
 or exercise a physical FIDO key.
+
+Once Apple has received an upload, stopping the local command or CI job does not
+cancel Apple's processing. Keep the submission ID; use `xcrun notarytool info`
+or `xcrun notarytool wait` with that ID and the same Apple account/team to check
+it from your Mac, instead of uploading it again. `notarytool history` lists past
+submissions if the ID was not recorded. These commands can prompt privately for
+the app-specific password when supplied with `--apple-id` and `--team-id`.
+Resuming status checks does not resume a canceled packaging job: stapling and
+archiving still require the original signed app. See `xcrun notarytool submit --help`
+for its timeout behavior, and Apple's notarization workflow linked above.
 
 ## Update action pins
 
