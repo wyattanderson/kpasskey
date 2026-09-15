@@ -119,7 +119,10 @@ import Testing
     let gate = PublicationGate(deadline: .now.advanced(by: .milliseconds(100)))
     let bridge = PasskeyInteraction(gate: gate, deadline: .now.advanced(by: .milliseconds(100))) { _, _ in }
     let waiting = Task.detached { Result { try bridge.ask("pin") } }
-    if cancel { gate.cancel(); bridge.cancel() }
+    if cancel {
+      gate.cancel()
+      bridge.cancel()
+    }
     switch await waiting.value {
     case .success: Issue.record("Unanswered interaction succeeded")
     case .failure(let failure):

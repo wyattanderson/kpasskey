@@ -35,6 +35,7 @@ public final class Authentication {
     }
     let id = UUID().uuidString
     prepare(id)
+
     do {
       try await connect()
       guard operation == id else { return }
@@ -47,7 +48,11 @@ public final class Authentication {
 
   private func connect() async throws {
     if client.isConnected { return }
-    if let connectionTask { try await connectionTask.value; return }
+    if let connectionTask {
+      try await connectionTask.value
+      return
+    }
+
     let task = Task { try await client.connect() }
     connectionTask = task
     defer { connectionTask = nil }
@@ -75,11 +80,16 @@ public final class Authentication {
   func updateDevices(_ keys: [SecurityKey]) {
     let inserted = keys.filter { key in !devices.contains { $0.id == key.id } }
     devices = keys
+
     // Insertion suggests intent only while idle; never switch an in-flight authentication.
     if !isRunning {
-      if let newest = inserted.last { selectedDevice = newest.id }
-      else if !keys.contains(where: { $0.id == selectedDevice }) { selectedDevice = keys.first?.id }
+      if let newest = inserted.last {
+        selectedDevice = newest.id
+      } else if !keys.contains(where: { $0.id == selectedDevice }) {
+        selectedDevice = keys.first?.id
+      }
     }
+
     deviceNotice = keys.isEmpty ? "Insert a security key to sign in." : ""
   }
 
@@ -96,6 +106,7 @@ public final class Authentication {
 
   func receive(_ event: Message) {
     guard event.operation == operation else { return }
+
     switch event.kind {
     case "interaction":
       guard !cancelling else { return }
@@ -122,7 +133,8 @@ public final class Authentication {
       promptDeadline = nil
       sending = false
       cancelling = false
-    default: break
+    default:
+      break
     }
   }
 
@@ -151,8 +163,12 @@ public final class Authentication {
     let choice: String
     if event.value == "selectDevice", let device, event.choices.indices.contains(device) {
       choice = "device-\(device)"
-    } else if let secret, Self.validSecret(secret, for: event) { choice = "" }
-    else { return }
+    } else if let secret, Self.validSecret(secret, for: event) {
+      choice = ""
+    } else {
+      return
+    }
+
     sending = true
     // Consume before awaiting: a new prompt or terminal can precede this response's ack.
     prompt = nil
@@ -160,8 +176,12 @@ public final class Authentication {
     message = "Signing in…"
     do {
       let ack: Message
-      if choice.isEmpty, let secret { ack = try await client.respond(to: event, password: secret) }
-      else { ack = try await client.respond(to: event, value: choice) }
+      if choice.isEmpty, let secret {
+        ack = try await client.respond(to: event, password: secret)
+      } else {
+        ack = try await client.respond(to: event, value: choice)
+      }
+
       if operation == id {
         sending = false
         if ack.value != "ok" {

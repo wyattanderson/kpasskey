@@ -55,6 +55,7 @@ public final class WorkerClient {
     connection.invalidationHandler = lost
     self.connection = connection
     connection.activate()
+
     // launchd throttles a service restart after a crash; negotiation allows that delay.
     let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
     guard generation == token else { throw ClientFailure(status: .disconnected) }
@@ -81,6 +82,7 @@ public final class WorkerClient {
       operations[operation] = (0, snapshot.configuration?.mode.rawValue)
       armDeadline(operation, milliseconds: snapshot.timeoutMilliseconds + 1_000)
     }
+
     do {
       let reply = try await exchange(Message("start", operation: operation, snapshot: snapshot))
       if generation == token && reply.value != Status.ok.rawValue && tracking { forget(operation) }
@@ -131,13 +133,16 @@ public final class WorkerClient {
     defer { watchdog.cancel() }
     return try await withCheckedThrowingContinuation { continuation in
       pending[id] = continuation
-      let proxy =
-        connection.remoteObjectProxyWithErrorHandler { @Sendable [weak self] _ in
-          Task { @MainActor in
-            guard let self, self.generation == token else { return }
-            self.close(.workerLost)
-          }
-        } as! WorkerProtocol
+      guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] _ in
+        Task { @MainActor in
+          guard let self, self.generation == token else { return }
+          self.close(.workerLost)
+        }
+      }) as? WorkerProtocol else {
+        close(.protocolViolation)
+        return
+      }
+
       proxy.exchange(message) { [weak self] reply in
         Task { @MainActor in
           guard let self, self.generation == token else { return }
@@ -209,11 +214,13 @@ public final class WorkerClient {
     let old = connection
     connection = nil
     old?.invalidate()
+
     let replies = pending
     pending.removeAll()
     for continuation in replies.values {
       continuation.resume(throwing: ClientFailure(status: status))
     }
+
     let active = operations
     operations.removeAll()
     for task in deadlines.values { task.cancel() }

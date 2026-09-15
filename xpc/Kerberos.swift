@@ -6,7 +6,11 @@ import PasskeyWire
 public struct KerberosFailure: Error, Sendable {
   public let status: Status
   public let code: Int32
-  public init(_ status: Status, code: Int32 = 0) { self.status = status; self.code = code }
+
+  public init(_ status: Status, code: Int32 = 0) {
+    self.status = status
+    self.code = code
+  }
 }
 
 func checked(_ code: Int32, _ status: Status = .configurationInvalid) throws {
@@ -19,20 +23,27 @@ public final class PublicationGate: @unchecked Sendable {
   private var cancelled = false
   private var committing = false
   private let deadline: ContinuousClock.Instant?
+
   public init(deadline: ContinuousClock.Instant? = nil) { self.deadline = deadline }
+
   @discardableResult public func cancel() -> Bool {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     guard !committing else { return false }
     cancelled = true
     return true
   }
+
   public func check() throws {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     if cancelled { throw KerberosFailure(.cancelled) }
     if let deadline, ContinuousClock.now >= deadline { throw KerberosFailure(.deadlineExceeded) }
   }
+
   public func beginPublication() throws {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     if cancelled { throw KerberosFailure(.cancelled) }
     if let deadline, ContinuousClock.now >= deadline { throw KerberosFailure(.deadlineExceeded) }
     committing = true
@@ -48,8 +59,15 @@ public func makeProfile(_ settings: Configuration, plugin: String? = nil,
   guard let profile else { throw KerberosFailure(.configurationInvalid) }
   do {
     func add(_ names: [String], _ value: String) throws {
-      let strings = names.map { strdup($0)! }
-      defer { strings.forEach { free($0) } }
+      var strings: [UnsafeMutablePointer<CChar>] = []
+      defer {
+        for string in strings { free(string) }
+      }
+      for name in names {
+        guard let string = strdup(name) else { throw KerberosFailure(.configurationInvalid) }
+        strings.append(string)
+      }
+
       var pointers = strings.map { Optional(UnsafePointer($0)) } + [nil]
       try checked(Int32(profile_add_relation(profile, &pointers, value)))
     }
@@ -102,7 +120,10 @@ public func makeContext(_ settings: Configuration, plugin: String? = nil,
   do {
     try checked(krb5_cc_set_default_name(context, "MEMORY:" + UUID().uuidString))
     return context
-  } catch { krb5_free_context(context); throw error }
+  } catch {
+    krb5_free_context(context)
+    throw error
+  }
 }
 
 public func resolvePrincipal(_ settings: Configuration, context: krb5_context) throws -> krb5_principal {
@@ -170,21 +191,24 @@ public func acquirePassword(_ settings: Configuration, password: Data, gate: Pub
   defer { krb5_get_init_creds_opt_free(context, options) }
   var staging: krb5_ccache?
   try checked(krb5_cc_new_unique(context, "MEMORY", nil, &staging))
+  guard let staging else { throw KerberosFailure(.configurationInvalid) }
   defer { krb5_cc_destroy(context, staging) }
   try checked(krb5_get_init_creds_opt_set_out_ccache(context, options, staging))
+
   var credentials = krb5_creds()
   defer { krb5_free_cred_contents(context, &credentials) }
   var bytes = Array(password) + [0]
   defer { bytes.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }
   try gate.check()
-  let code = bytes.withUnsafeMutableBytes { buffer in
-    krb5_get_init_creds_password(context, &credentials, principal,
-      buffer.baseAddress!.assumingMemoryBound(to: CChar.self),
+  let code = bytes.withUnsafeMutableBytes { buffer -> Int32 in
+    guard let baseAddress = buffer.baseAddress else { return Int32(KRB5_LIBOS_CANTREADPWD) }
+    return krb5_get_init_creds_password(context, &credentials, principal,
+      baseAddress.assumingMemoryBound(to: CChar.self),
       { _, _, _, _, _, _ in Int32(KRB5_LIBOS_CANTREADPWD) }, nil, 0, nil, options)
   }
   try gate.check()
   try checked(code, authenticationStatus(code))
-  return try publish(context: context, staging: staging!, credentials: &credentials,
+  return try publish(context: context, staging: staging, credentials: &credentials,
                      makeDefault: settings.makeDefault, gate: gate)
 }
 
@@ -197,13 +221,16 @@ public func publish(context: krb5_context, staging: krb5_ccache,
                     })
   throws -> TicketMetadata
 {
+  guard let client = credentials.client else { throw KerberosFailure(.publicationFailed) }
   var name: UnsafeMutablePointer<CChar>?
-  try checked(krb5_unparse_name(context, credentials.client, &name), .publicationFailed)
+  try checked(krb5_unparse_name(context, client, &name), .publicationFailed)
+  guard let name else { throw KerberosFailure(.publicationFailed) }
   defer { krb5_free_unparsed_name(context, name) }
-  let principal = String(cString: name!)
-  let realmData = credentials.client.pointee.realm
+  let principal = String(cString: name)
+  let realmData = client.pointee.realm
   let realm = String(decoding: UnsafeRawBufferPointer(start: realmData.data,
     count: Int(realmData.length)), as: UTF8.self)
+
   // Validate metadata before any shared-cache side effect.
   let metadata = TicketMetadata(principal: principal, realm: realm, cache: "API:pending",
     expires: Int(credentials.times.endtime), renewUntil: Int(credentials.times.renew_till),
@@ -212,17 +239,19 @@ public func publish(context: krb5_context, staging: krb5_ccache,
   try gate.beginPublication()
   var destination: krb5_ccache?
   try checked(createCache(context, &destination), .publicationFailed)
+  guard let destination else { throw KerberosFailure(.publicationFailed) }
   var committed = false
   defer {
     if committed { krb5_cc_close(context, destination) }
     else { krb5_cc_destroy(context, destination) }
   }
-  try checked(krb5_cc_initialize(context, destination, credentials.client), .publicationFailed)
+  try checked(krb5_cc_initialize(context, destination, client), .publicationFailed)
   try checked(krb5_cc_copy_creds(context, staging, destination), .publicationFailed)
   var cacheName: UnsafeMutablePointer<CChar>?
   try checked(krb5_cc_get_full_name(context, destination, &cacheName), .publicationFailed)
+  guard let cacheName else { throw KerberosFailure(.publicationFailed) }
   defer { krb5_free_string(context, cacheName) }
-  let result = TicketMetadata(principal: principal, realm: realm, cache: String(cString: cacheName!),
+  let result = TicketMetadata(principal: principal, realm: realm, cache: String(cString: cacheName),
     expires: metadata.expires, renewUntil: metadata.renewUntil, forwardable: metadata.forwardable, mode: mode)
   guard result.valid else { throw KerberosFailure(.publicationFailed) }
   if makeDefault { try checked(krb5_cc_switch(context, destination), .publicationFailed) }

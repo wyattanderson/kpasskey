@@ -14,6 +14,14 @@ public enum Status: String, Sendable {
   case pinInvalid, pinBlocked, pinAuthBlocked, pinRequired, uvUnavailable, uvBlocked, deviceFailure
 }
 
+private func encodePropertyList<T: Encodable>(_ value: T, forKey key: String, with coder: NSCoder) {
+  do {
+    coder.encode(try PropertyListEncoder().encode(value) as NSData, forKey: key)
+  } catch {
+    coder.failWithError(error)
+  }
+}
+
 /// Immutable per-operation snapshot; configuration selects real authentication.
 @objc(KPasskeySnapshot)
 public final class Snapshot: NSObject, NSSecureCoding, Sendable {
@@ -80,7 +88,7 @@ public final class Snapshot: NSObject, NSSecureCoding, Sendable {
     coder.encode(outcome as NSString, forKey: "outcome")
     coder.encode(timeoutMilliseconds, forKey: "timeout")
     if let configuration {
-      coder.encode(try! PropertyListEncoder().encode(configuration) as NSData, forKey: "configuration")
+      encodePropertyList(configuration, forKey: "configuration", with: coder)
     }
   }
 }
@@ -209,8 +217,8 @@ public final class Message: NSObject, NSSecureCoding, Sendable {
     coder.encode(secret as NSData?, forKey: "secret")
     coder.encode(errorCode, forKey: "errorCode")
     coder.encode(choices as NSArray, forKey: "choices")
-    if !devices.isEmpty { coder.encode(try! PropertyListEncoder().encode(devices) as NSData, forKey: "devices") }
-    if let ticket { coder.encode(try! PropertyListEncoder().encode(ticket) as NSData, forKey: "ticket") }
+    if !devices.isEmpty { encodePropertyList(devices, forKey: "devices", with: coder) }
+    if let ticket { encodePropertyList(ticket, forKey: "ticket", with: coder) }
   }
 }
 

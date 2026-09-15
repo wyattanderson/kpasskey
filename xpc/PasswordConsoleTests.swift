@@ -6,7 +6,10 @@ import Testing
   var master: Int32 = -1
   var slave: Int32 = -1
   #expect(openpty(&master, &slave, nil, nil, nil) == 0)
-  defer { close(master); close(slave) }
+  defer {
+    close(master)
+    close(slave)
+  }
   #expect(fcntl(master, F_SETFL, O_NONBLOCK) == 0)
   let outputFD = master
   func output() async throws -> String {

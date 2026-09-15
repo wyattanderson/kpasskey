@@ -6,7 +6,12 @@ import PasskeyWire
 public struct PasskeyPlugins: Sendable {
   public let passkey: String
   public let pkinit: String
-  public init(passkey: String, pkinit: String) { self.passkey = passkey; self.pkinit = pkinit }
+
+  public init(passkey: String, pkinit: String) {
+    self.passkey = passkey
+    self.pkinit = pkinit
+  }
+
   public static func bundled() -> PasskeyPlugins {
     let host = Bundle.main.bundleURL.deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
@@ -20,6 +25,7 @@ private final class Responder {
   let interaction: PasskeyInteraction
   var failure: Error?
   var answered = false
+
   init(_ interaction: PasskeyInteraction) { self.interaction = interaction }
 }
 
@@ -34,6 +40,7 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
   try manager.createDirectory(at: directory, withIntermediateDirectories: false,
                               attributes: [.posixPermissions: 0o700])
   defer { try? manager.removeItem(at: directory) }
+
   let anchors = directory.appendingPathComponent("ca.pem")
   let pem = "-----BEGIN CERTIFICATE-----\n" + settings.pkinitCA.base64EncodedString(options: .lineLength64Characters)
     + "\n-----END CERTIFICATE-----\n"
@@ -42,9 +49,11 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
   defer { krb5_free_context(armorContext) }
   var armor: krb5_ccache?
   try checked(krb5_cc_new_unique(armorContext, "MEMORY", nil, &armor), .armorFailed)
+  guard let armor else { throw KerberosFailure(.armorFailed) }
   defer { krb5_cc_destroy(armorContext, armor) }
   var anonymous: krb5_principal?
   try checked(krb5_parse_name(armorContext, "WELLKNOWN/ANONYMOUS@" + settings.effectiveRealm, &anonymous), .armorFailed)
+  guard let anonymous else { throw KerberosFailure(.armorFailed) }
   defer { krb5_free_principal(armorContext, anonymous) }
   let armorOptions = try credentialOptions(settings, context: armorContext)
   defer { krb5_get_init_creds_opt_free(armorContext, armorOptions) }
@@ -71,8 +80,10 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
   try checked(krb5_get_init_creds_opt_set_fast_flags(context, options, KRB5_FAST_REQUIRED), .armorFailed)
   var staging: krb5_ccache?
   try checked(krb5_cc_new_unique(context, "MEMORY", nil, &staging))
+  guard let staging else { throw KerberosFailure(.configurationInvalid) }
   defer { krb5_cc_destroy(context, staging) }
   try checked(krb5_get_init_creds_opt_set_out_ccache(context, options, staging))
+
   let responder = Responder(interaction)
   try checked(krb5_get_init_creds_opt_set_responder(context, options, { context, pointer, rctx in
     guard let pointer, let context, let rctx else { return Int32(KRB5_PREAUTH_FAILED) }
@@ -92,9 +103,10 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
       let assertion = try getAssertion(message.data, interaction: state.interaction)
       let reply = try encodeWire(Envelope(phase: 2, state: message.state, data: assertion))
       try state.interaction.gate.check()
-      let code = reply.withUnsafeBytes {
-        krb5_responder_set_answer(context, rctx, passkeyQuestion,
-                                 $0.baseAddress!.assumingMemoryBound(to: CChar.self))
+      let code = reply.withUnsafeBytes { buffer -> Int32 in
+        guard let baseAddress = buffer.baseAddress else { return Int32(KRB5_PREAUTH_FAILED) }
+        return krb5_responder_set_answer(
+          context, rctx, passkeyQuestion, baseAddress.assumingMemoryBound(to: CChar.self))
       }
       if code == 0 { state.answered = true }
       return code
@@ -119,6 +131,6 @@ public func acquirePasskey(_ settings: Configuration, interaction: PasskeyIntera
     krb5_cc_get_config(context, staging, credentials.server, "pa_type", &marker) == 0,
     let data = marker.data, Data(bytes: data, count: Int(marker.length)) == Data("153".utf8)
   else { throw KerberosFailure(.passkeyRequired) }
-  return try publish(context: context, staging: staging!, credentials: &credentials,
+  return try publish(context: context, staging: staging, credentials: &credentials,
     makeDefault: settings.makeDefault, gate: interaction.gate, mode: "passkey")
 }

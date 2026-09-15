@@ -62,7 +62,10 @@ private func values(_ profile: profile_t, _ path: [String]) throws -> [String] {
   defer { profile_free_list(output) }
   var result: [String] = []
   var index = 0
-  while let value = output?[index] { result.append(String(cString: value)); index += 1 }
+  while let value = output?[index] {
+    result.append(String(cString: value))
+    index += 1
+  }
   return result
 }
 
@@ -147,7 +150,10 @@ private func values(_ profile: profile_t, _ path: [String]) throws -> [String] {
   var staging: krb5_ccache?
   #expect(krb5_cc_new_unique(context, "MEMORY", nil, &unrelated) == 0)
   #expect(krb5_cc_new_unique(context, "MEMORY", nil, &staging) == 0)
-  defer { krb5_cc_destroy(context, staging); krb5_cc_destroy(context, unrelated) }
+  defer {
+    krb5_cc_destroy(context, staging)
+    krb5_cc_destroy(context, unrelated)
+  }
   #expect(krb5_cc_initialize(context, unrelated, principal) == 0)
   #expect(krb5_cc_initialize(context, staging, principal) == 0)
   var credentials = krb5_creds()

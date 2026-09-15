@@ -47,7 +47,11 @@ func readPassword(until deadline: ContinuousClock.Instant, terminal: Int32? = ni
     switch byte {
     case 3, 4: return nil
     case 10, 13: return count == 0 ? nil : Data(bytes.prefix(count))
-    case 8, 127: if count > 0 { count -= 1; bytes[count] = 0 }
+    case 8, 127:
+      if count > 0 {
+        count -= 1
+        bytes[count] = 0
+      }
     case 0: return nil
     default:
       guard count < bytes.count else { return nil }
@@ -70,7 +74,12 @@ func passwordConsole(_ client: WorkerClient, settings: Configuration) async thro
       lastMessage = authentication.message
       print(lastMessage)
     }
-    guard let current = authentication.prompt else { try await Task.sleep(for: .milliseconds(10)); continue }
+
+    guard let current = authentication.prompt else {
+      try await Task.sleep(for: .milliseconds(10))
+      continue
+    }
+
     let deadline = ContinuousClock.now.advanced(by: .milliseconds(current.remainingMilliseconds))
     let label: String
     if current.value == "selectDevice" {
@@ -88,7 +97,12 @@ func passwordConsole(_ client: WorkerClient, settings: Configuration) async thro
     defer { stopRead.cancel() }
     var secret = try await read.value
     input = nil
-    defer { if secret != nil { secret!.resetBytes(in: 0..<secret!.count) } }
+    defer {
+      secret?.withUnsafeMutableBytes {
+        _ = memset_s($0.baseAddress, $0.count, 0, $0.count)
+      }
+    }
+
     if let password = secret, authentication.isRunning {
       if current.value == "selectDevice" {
         guard let text = String(data: password, encoding: .utf8), let number = Int(text),
@@ -102,6 +116,7 @@ func passwordConsole(_ client: WorkerClient, settings: Configuration) async thro
       } else { await authentication.cancel() }
     } else { await authentication.cancel() }
   }
+
   guard let terminal = authentication.terminal else { throw ClientFailure(status: .configurationInvalid) }
   print("terminal \(terminal.value)")
   if let ticket = terminal.ticket {

@@ -24,9 +24,14 @@ public struct CachedTicket: Equatable, Identifiable, Sendable {
   public init(cache: String, principal: String, starts: Date, expires: Date,
               invalid: Bool = false, method: Method,
               renewable: Bool = false, forwardable: Bool = false) {
-    self.cache = cache; self.principal = principal; self.starts = starts
-    self.expires = expires; self.invalid = invalid; self.method = method
-    self.renewable = renewable; self.forwardable = forwardable
+    self.cache = cache
+    self.principal = principal
+    self.starts = starts
+    self.expires = expires
+    self.invalid = invalid
+    self.method = method
+    self.renewable = renewable
+    self.forwardable = forwardable
   }
 
   public func state(at now: Date) -> State {
@@ -70,6 +75,7 @@ public enum TicketCache {
       do { try destroy(ticket) }
       catch { failures.append(ticket.cache) }
     }
+
     return failures
   }
 
@@ -157,8 +163,9 @@ public enum TicketCache {
     defer { krb5_cc_end_seq_get(context, cache, &cursor) }
     var name: UnsafeMutablePointer<CChar>?
     try check(krb5_cc_get_full_name(context, cache, &name))
+    guard let name else { throw CacheReadFailure(code: -1) }
     defer { krb5_free_string(context, name) }
-    let cacheName = String(cString: name!)
+    let cacheName = String(cString: name)
     var result: [CachedTicket] = []
     while true {
       var credentials = krb5_creds()
@@ -173,6 +180,7 @@ public enum TicketCache {
         string(server.pointee.realm) == string(client.pointee.realm) else { continue }
       var principal: UnsafeMutablePointer<CChar>?
       try check(krb5_unparse_name(context, client, &principal))
+      guard let principal else { throw CacheReadFailure(code: -1) }
       defer { krb5_free_unparsed_name(context, principal) }
       var data = krb5_data()
       let configCode = krb5_cc_get_config(context, cache, server, "pa_type", &data)
@@ -185,7 +193,7 @@ public enum TicketCache {
       default: .unknown
       }
       let start = credentials.times.starttime == 0 ? credentials.times.authtime : credentials.times.starttime
-      result.append(CachedTicket(cache: cacheName, principal: String(cString: principal!),
+      result.append(CachedTicket(cache: cacheName, principal: String(cString: principal),
         starts: Date(timeIntervalSince1970: Double(start)),
         expires: Date(timeIntervalSince1970: Double(credentials.times.endtime)),
         invalid: credentials.ticket_flags & TKT_FLG_INVALID != 0, method: method,

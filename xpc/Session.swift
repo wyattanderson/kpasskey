@@ -38,13 +38,21 @@ public final class WorkerSession: NSObject, WorkerProtocol {
     Task { @MainActor in
       if message.kind == "devices", message.validCommand, message.version == 4,
         connected, negotiated {
-        if let discovery { reply(await discovery.value); return }
+        if let discovery {
+          reply(await discovery.value)
+          return
+        }
+
         let previous = keys
         let enrich = !Self.kerberosBusy && !Self.metadataBusy
         if enrich { Self.metadataBusy = true }
+
         let task = Task { @MainActor in
-          let result = await Task.detached { Result { try discoverKeys(previous: previous, enrich: enrich) } }.value
+          let result = await Task.detached {
+            Result { try discoverKeys(previous: previous, enrich: enrich) }
+          }.value
           if enrich { Self.metadataBusy = false }
+
           switch result {
           case .success(let keys):
             self.keys = keys
@@ -75,48 +83,66 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       return Message("negotiated", value: "fake,password,passkey,devices", sequence: Int(getpid()))
     }
     guard negotiated else { return answer(.protocolViolation) }
+
     switch message.kind {
     case "start":
-      guard active == nil, !Self.kerberosBusy, !Self.metadataBusy else { return answer(.busy) }
+      guard active == nil, !Self.kerberosBusy, !Self.metadataBusy else {
+        return answer(.busy)
+      }
+      guard let snapshot = message.snapshot else { return answer(.protocolViolation) }
+
       selectedPath = nil
-      if let token = message.snapshot?.selectedDevice, !token.isEmpty {
+      if !snapshot.selectedDevice.isEmpty {
+        let token = snapshot.selectedDevice
         guard let key = keys.first(where: { $0.key.id == token }) else { return answer(.deviceRemoved) }
         selectedPath = key.path
       }
+
       guard used.count < 1024, used.insert(message.operation).inserted else {
         return answer(.protocolViolation)
       }
+
       active = message
-      expires = .now.advanced(by: .milliseconds(message.snapshot!.timeoutMilliseconds))
+      expires = .now.advanced(by: .milliseconds(snapshot.timeoutMilliseconds))
       sequence = 0
       event("progress", value: "started")
-      if message.snapshot!.configuration != nil {
+
+      if let configuration = snapshot.configuration {
         Self.kerberosBusy = true
         gate = PublicationGate(deadline: expires)
-        if message.snapshot!.configuration!.mode == .passkey { beginNative() }
-        else { prompt("password") }
-      } else { prompt("selectKey") }
-      let milliseconds = message.snapshot!.timeoutMilliseconds
+        if configuration.mode == .passkey {
+          beginNative()
+        } else {
+          prompt("password")
+        }
+      } else {
+        prompt("selectKey")
+      }
+
       deadline = Task { [weak self] in
-        do { try await Task.sleep(for: .milliseconds(milliseconds)) } catch { return }
+        do { try await Task.sleep(for: .milliseconds(snapshot.timeoutMilliseconds)) } catch { return }
         self?.stop(.deadlineExceeded)
       }
       return answer(.ok)
+
     case "respond":
       if active != nil && ContinuousClock.now >= expires { stop(.deadlineExceeded) }
       guard active?.operation == message.operation, interaction == message.interaction else {
         return answer(.staleInteraction)
       }
+
       if let passkeyInteraction {
-        guard (stage == "pin" && message.secret != nil && message.secret!.count <= 63)
+        guard (stage == "pin" && message.secret.map { $0.count <= 63 } == true)
           || (stage == "selectDevice" && message.secret == nil
             && (0..<deviceCount).contains(where: { message.value == "device-\($0)" }))
         else { return answer(.protocolViolation) }
+
         interaction = ""
         stage = "authenticating"
         passkeyInteraction.respond(message)
         return answer(.ok)
       }
+
       if stage == "password" {
         guard let secret = message.secret, message.value.isEmpty,
           active?.snapshot?.configuration != nil, gate != nil else {
@@ -125,19 +151,23 @@ public final class WorkerSession: NSObject, WorkerProtocol {
         beginNative(password: secret)
         return answer(.ok)
       }
+
       guard
         message.secret == nil && ((stage == "selectKey" && message.value == "key-1")
           || (stage == "touch" && message.value == "continue"))
       else { return answer(.protocolViolation) }
+
       if stage == "selectKey" {
         prompt("touch")
       } else {
         finish(active?.snapshot?.outcome == "success" ? .ok : .scriptedFailure)
       }
       return answer(.ok)
+
     case "cancel":
       if active?.operation == message.operation { stop(.cancelled) }
       return answer(.ok)
+
     default: return answer(.protocolViolation)
     }
   }
@@ -168,6 +198,7 @@ public final class WorkerSession: NSObject, WorkerProtocol {
       Self.kerberosBusy = false
       self.gate = nil
       passkeyInteraction = nil
+
       guard active != nil else { return }
       switch result {
       case .success(let ticket): finish(.ok, ticket: ticket)
@@ -199,7 +230,11 @@ public final class WorkerSession: NSObject, WorkerProtocol {
         if self.gate === gate && nativeWork != nil { terminateBlockedWorker() }
       }
     }
-    if gate != nil && nativeWork == nil { Self.kerberosBusy = false; gate = nil }
+
+    if gate != nil && nativeWork == nil {
+      Self.kerberosBusy = false
+      gate = nil
+    }
     finish(status)
   }
 

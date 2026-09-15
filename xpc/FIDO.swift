@@ -12,34 +12,49 @@ public final class PasskeyInteraction: @unchecked Sendable {
   public let deadline: ContinuousClock.Instant
   public let selectedPath: String?
   private let emit: @Sendable (String, [String]) -> Void
+
   public init(gate: PublicationGate, deadline: ContinuousClock.Instant, selectedPath: String? = nil,
               emit: @escaping @Sendable (String, [String]) -> Void) {
-    self.gate = gate; self.deadline = deadline; self.emit = emit
+    self.gate = gate
+    self.deadline = deadline
+    self.emit = emit
     self.selectedPath = selectedPath
   }
+
   public func respond(_ message: Message) {
-    condition.lock(); defer { condition.unlock() }
-    response = message; condition.signal()
+    condition.lock()
+    defer { condition.unlock() }
+    response = message
+    condition.signal()
   }
+
   public func cancel() {
-    condition.lock(); defer { condition.unlock() }
-    stopped = true; condition.signal()
+    condition.lock()
+    defer { condition.unlock() }
+    stopped = true
+    condition.signal()
   }
+
   public func ask(_ stage: String, choices: [String] = []) throws -> Message {
     try gate.check()
-    condition.lock(); defer { condition.unlock() }
+    condition.lock()
+    defer { condition.unlock() }
     response = nil
     emit(stage, choices)
+
     while response == nil && !stopped {
       try gate.check()
       condition.wait(until: Date(timeIntervalSinceNow: 0.05))
     }
+
     try gate.check()
     guard !stopped, let response else { throw KerberosFailure(.cancelled) }
     self.response = nil
     return response
   }
+
   public func progress(_ stage: String) { emit(stage, []) }
+
   public func remaining() throws -> Int32 {
     try gate.check()
     return Int32(max(1, min(30_000, Int(ContinuousClock.now.duration(to: deadline) / .milliseconds(1)))))
@@ -76,6 +91,7 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
   try fidoChecked(fido_dev_info_manifest(manifestPointer, 16, &count))
   try interaction.gate.check()
   guard count > 0 else { throw KerberosFailure(.keyAbsent) }
+
   let choices = (0..<count).map { index -> String in
     let info = fido_dev_info_ptr(manifestPointer, index)
     return SecurityKey.label(
@@ -94,6 +110,7 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
   guard let index = (0..<count).first(where: { selected == "device-\($0)" }),
     let path = fido_dev_info_path(fido_dev_info_ptr(manifestPointer, index))
   else { throw KerberosFailure(.protocolViolation) }
+
   var device = fido_dev_new()
   guard let dev = device else { throw KerberosFailure(.deviceFailure) }
   defer { fido_dev_free(&device) }
@@ -115,19 +132,25 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
   let uv = challenge.user_verification == 1
   let onboard = uv && fido_dev_has_uv(dev)
   guard !uv || onboard || fido_dev_has_pin(dev) else { throw KerberosFailure(.uvUnavailable) }
+
   // A supplied PIN provides UV; libfido2 requires the CTAP uv option omitted in that case.
   try fidoChecked(fido_assert_set_uv(handle, onboard ? FIDO_OPT_TRUE : FIDO_OPT_OMIT))
   func request(pin: Data?) throws -> Int32 {
     try fidoChecked(fido_dev_set_timeout(dev, interaction.remaining()))
     interaction.progress(onboard && pin == nil ? "verifyOnDevice" : "touchKey")
     var bytes = pin.map { Array($0) + [0] }
-    defer { if bytes != nil { bytes!.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } } }
+    defer {
+      bytes?.withUnsafeMutableBytes {
+        _ = memset_s($0.baseAddress, $0.count, 0, $0.count)
+      }
+    }
     let code = bytes?.withUnsafeBytes {
       fido_dev_get_assert(dev, handle, $0.baseAddress!.assumingMemoryBound(to: CChar.self))
     } ?? fido_dev_get_assert(dev, handle, nil)
     try interaction.gate.check()
     return code
   }
+
   func pin() throws -> Data {
     let answer = try interaction.ask("pin")
     guard let pin = answer.secret, pin.count <= 63,
@@ -135,9 +158,11 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
     else { throw KerberosFailure(.protocolViolation) }
     return pin
   }
+
   var code: Int32
-  if uv && !onboard { code = try request(pin: pin()) }
-  else {
+  if uv && !onboard {
+    code = try request(pin: pin())
+  } else {
     code = try request(pin: nil)
     // Only PIN_REQUIRED permits one PIN attempt, never an automatic wrong-PIN/UV retry.
     if code == FIDO_ERR_PIN_REQUIRED && fido_dev_has_pin(dev) {
@@ -146,10 +171,12 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
     }
   }
   try fidoChecked(code)
+
   func bytes(_ pointer: UnsafePointer<UInt8>?, _ count: Int) -> Data {
     guard let pointer, count > 0 else { return Data() }
     return Data(bytes: pointer, count: count)
   }
+
   // All entries must match the allow-list. The first valid entry is sufficient for this principal.
   guard (1...64).contains(fido_assert_count(handle)) else { throw KerberosFailure(.passkeyInvalid) }
   var result: Assertion?
@@ -163,5 +190,6 @@ public func getAssertion(_ challenge: Challenge, interaction: PasskeyInteraction
     try item.validate(challenge: challenge)
     if result == nil { result = item }
   }
-  return result!
+  guard let result else { throw KerberosFailure(.passkeyInvalid) }
+  return result
 }

@@ -12,7 +12,9 @@ public struct SecurityKey: Codable, Equatable, Identifiable, Sendable {
   ]
 
   public init(id: String, name: String, icon: String? = nil) {
-    self.id = id; self.name = name; self.icon = icon
+    self.id = id
+    self.name = name
+    self.icon = icon
   }
 
   public var valid: Bool {
