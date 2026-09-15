@@ -3,10 +3,9 @@
 Milestone 1 builds dependencies and exercises Swift interoperability with C
 libraries, dynamic loading, linkage, and relocation through Swift Testing.
 Milestone 2 adds a signed console host and embedded scripted XPC worker.
-Milestone 3 adds ordinary password authentication and shared-cache publication;
-live acceptance is tracked in PLAN.md. Milestone 4 adds the Swift passkey plugin,
-FIDO adapter and FAST armor. The native app in `app/` adds SwiftUI sign-in,
-settings and menu-bar scenes; [NATIVE_PLAN.md](../NATIVE_PLAN.md) tracks that work.
+Milestone 3 adds ordinary password authentication and shared-cache publication.
+Milestone 4 adds the Swift passkey plugin, FIDO adapter and FAST armor. The
+native app in `app/` adds SwiftUI sign-in, settings and menu-bar scenes.
 
 Following [AGENTS.md](../AGENTS.md), Swift and modern Swift tooling are required
 for project-owned implementation and executable tools, with Swift Testing required
@@ -158,8 +157,7 @@ certificate. Device selection and PINs are entered at the terminal; the PIN is
 never an argument. Settings plists can select the same mode with explicit KDCs,
 timeouts and ticket options. See CONFIGURATION.md for trust and failure policy.
 Live authentication creates a new shared API cache only after verification;
-clean up only that returned cache when testing. Live acceptance remains tracked
-separately from successful builds in PLAN.md.
+clean up only that returned cache when testing.
 
 ## Dependency closure and local labels
 
@@ -334,7 +332,7 @@ to cover console interactions, dependency closure and plugin loading.
 `//:release` builds the application ZIP. See [RELEASING.md](RELEASING.md) for
 SVU tagging, version stamping, the keyless GitHub Actions workflow, and enabling
 Developer ID signing and notarization. Clean-Mac distribution and real hardware
-acceptance remain part of the release criteria in NATIVE_PLAN.md.
+acceptance remain part of the release criteria.
 
 ## Yubico device presentation
 

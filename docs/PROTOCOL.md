@@ -139,7 +139,6 @@ server's upstream verification API. They also check no-armor and null-prompter
 plugin behavior. No SSSD code was copied or added to the build dependency graph;
 the reference sources establish protocol semantics, not a new source license.
 These tests do not substitute for testing the deployed FreeIPA/KDC decoder.
-The live compatibility/version matrix remains pending in PLAN.md.
 
 Use synthetic serialization fixtures and negative cases before live tests.
 Include independent checks against the KDC-side decoder/verifier so an encoder

@@ -23,11 +23,9 @@ automatic DNS realm/KDC discovery, configurable forwardable tickets and shared
 macOS cache publication, validated live with Apple's `klist` and `kgetcred`.
 Milestone 4 adds the Swift passkey plugin, libfido2 adapter, anonymous PKINIT
 armor and harness interactions. Offline validation passes; live passkey login
-and the hardware matrix remain pending in PLAN.md. The first native menu-bar
-app adds sign-in, settings, secure prompts and live shared-cache ticket status,
-including a colored menu-bar badge and cached authentication-method details.
-See [NATIVE_PLAN.md](NATIVE_PLAN.md) for build/run instructions and the remaining
-shortcut, login-item and distribution work.
+and the hardware matrix remain pending. The first native menu-bar app adds
+sign-in, settings, secure prompts and live shared-cache ticket status, including
+a colored menu-bar badge and cached authentication-method details.
 
 See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
 dependency choices, and clean reproduction. Run `bazel test //...` after
@@ -35,8 +33,7 @@ installing Xcode and completing its first-launch setup. Run
 `bazel test --config=development //...` to exercise the ad-hoc signed XPC peers;
 the default configuration checks that release policy refuses those peers.
 
-Start with [PLAN.md](PLAN.md), which defines the milestone order and acceptance
-criteria. Supporting documents describe:
+Supporting documents describe:
 
 - [Architecture and XPC contract](docs/ARCHITECTURE.md)
 - [Application-owned Kerberos configuration](docs/CONFIGURATION.md)

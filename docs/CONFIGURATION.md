@@ -209,8 +209,7 @@ another cache. This differs from pre-publication cancellation.
 `bazel test --config=development //:milestone3` covers configuration, secret
 archives, native profile/options, cancellation, unavailable KDCs, sequential
 snapshots and password XPC after relocation. Synthetic tests run with conflicting
-Kerberos environment values and do not modify shared caches. Live acceptance is
-tracked separately in PLAN.md.
+Kerberos environment values and do not modify shared caches.
 
 The password-free DNS test is opt-in: run `//xpc:kerberos_tests` with
 `--sandbox_default_allow_network=true`, `--test_env=KPASSKEY_TEST_DNS_DOMAIN=example.org`
