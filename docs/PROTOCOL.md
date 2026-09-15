@@ -4,9 +4,9 @@
 
 Implement a new MIT client preauthentication plugin for `PA-REDHAT-PASSKEY`
 (type 153). Preserve the server's protocol and security semantics. Do not
-preserve `macos-passkey`'s command line, helper arguments/stdin/stdout contract,
-SSSD naming, source structure, JSON object ownership, or build assumptions.
-No SSSD source tree should be needed to build or ship KPasskey.
+preserve legacy command lines, helper arguments/stdin/stdout contracts, SSSD
+naming, source structure, JSON object ownership, or build assumptions. No SSSD
+source tree should be needed to build or ship KPasskey.
 
 Implement the plugin's protocol logic and the libfido2 adapter in Swift, with
 Swift Testing for fixtures and automated tests, following
@@ -23,7 +23,6 @@ The sibling sources are a reference for investigation, particularly:
 - `passkey_clpreauth.c`: client callbacks and FAST behavior.
 - `passkey_kdcpreauth.c`: challenge/state checks and server handoff.
 - `sssd/src/passkey_child/passkey_child_assert.c`: assertion encoding and verification.
-- `macos-passkey/src/passkey_child_get_assert.c`: reduced, working device flow.
 
 The [SSSD design document](https://sssd.io/design-pages/passkey_kerberos.html)
 explains the overall architecture but explicitly warns that it may lag current

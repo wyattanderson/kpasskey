@@ -51,9 +51,8 @@ Supporting documents describe:
   Calling a C library or implementing an Objective-C-compatible protocol is
   not itself an exception. See [AGENTS.md](AGENTS.md) for the full policy.
 - Write a purpose-built MIT krb5 client preauthentication plugin.
-- Use `../macos-passkey` as a behavioral reference, not a source dependency.
-  Preserve compatibility with the FreeIPA KDC protocol, **not** with the old
-  command line, helper protocol, build system, configuration, or internal APIs.
+- Preserve compatibility with the FreeIPA KDC protocol, **not** with legacy
+  command lines, helper protocols, build systems, configuration, or internal APIs.
 - Keep MIT krb5 and libfido2. Do not implement Kerberos, CTAP, USB HID framing,
   or cryptographic primitives ourselves.
 - Use a bundled, unprivileged XPC worker and a shared native client interface.
