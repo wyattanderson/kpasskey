@@ -61,8 +61,8 @@ WebAuthn clientDataJSON or hash it again. [libfido2 assertion setters](https://d
 Apply input-size/count limits, exact bounded realm comparisons, strict Base64
 validation, and explicit cleanup. Authenticate the KDC with PKINIT, require FAST,
 and bind both request principal realms to the configured realm. Use the RP ID
-from that KDC's protected challenge unchanged, after bounded DNS syntax validation;
-there is no local RP override or inference from the realm or server hostname.
+from that KDC's protected challenge unchanged; there is no local RP override or
+inference from the realm or server hostname.
 Validate the returned authenticator data against the challenge's exact RP hash.
 
 ## Minimal plugin responsibilities

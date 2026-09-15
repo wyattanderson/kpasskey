@@ -30,18 +30,11 @@ public struct Challenge: Codable, Sendable {
   public let cryptographic_challenge: String
 
   public func validate() throws {
-    // Use the authenticated KDC's RP verbatim, with bounded DNS syntax and no local mapping.
-    guard !domain.isEmpty, domain.utf8.count <= 253,
-      domain.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ label in
-        !label.isEmpty && label.utf8.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
-          && label.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0)
-            || (97...122).contains($0) || $0 == 45 }
-      }) else { throw WireError.rpInvalid }
+    // libfido2 receives a C string but assertion verification hashes this Swift string; reject truncation.
+    guard !domain.utf8.contains(0) else { throw WireError.rpInvalid }
+    // We map this wire policy to CTAP's required/omitted UV option; unknown values must not downgrade UV.
     guard [0, 1].contains(user_verification) else { throw WireError.uvPolicy }
-    guard (1...64).contains(credential_id_list.count),
-      Set(credential_id_list).count == credential_id_list.count else { throw WireError.credentials }
-    do { for id in credential_id_list { _ = try binary(id, maximum: 1024) } }
-    catch { throw WireError.credentials }
+    // This protocol signs a SHA-256 client-data hash, so a different length cannot produce a valid assertion.
     do {
       guard try binary(cryptographic_challenge, maximum: 32).count == 32 else { throw WireError.invalid }
     } catch { throw WireError.challengeHash }

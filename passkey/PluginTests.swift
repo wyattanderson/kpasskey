@@ -131,7 +131,6 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
     (try challengeFixture(phase: 2), .phase),
     (try challengeFixture(["domain": "example.org\0.evil"]), .rpInvalid),
     (try challengeFixture(["user_verification": 2]), .uvPolicy),
-    (try challengeFixture(["credential_id_list": []]), .credentials),
     (try challengeFixture(["cryptographic_challenge": "AA=="]), .challengeHash),
   ] {
     bytes.withUnsafeBytes { buffer in

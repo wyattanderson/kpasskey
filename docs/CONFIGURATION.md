@@ -104,9 +104,9 @@ zero is optional, one is required; other values fail closed.
 
 The RP identifies the domain used when enrolling the passkey. It is passed
 unchanged to the authenticator and used to verify the assertion's RP hash.
-The plugin and worker require bounded DNS syntax. There is no local RP setting,
-override, or derivation from the realm or KDC hostname. Trust in the challenge
-comes from PKINIT authentication of the realm's KDC and the required FAST armor.
+There is no local RP setting, override, or derivation from the realm or KDC
+hostname. Trust in the challenge comes from PKINIT authentication of the realm's
+KDC and the required FAST armor.
 
 The harness accepts `--passkey user@REALM --ca /path/to/ca.pem`
 (PEM or DER). It reads the public certificate locally and sends DER bytes; the
