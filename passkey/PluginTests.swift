@@ -32,8 +32,14 @@ private final class Callbacks {
   let armor = UnsafeMutablePointer<krb5_keyblock>.allocate(capacity: 1)
   var keySet = false
   var fallbackDisabled = false
+
   init() { armor.initialize(to: krb5_keyblock()) }
-  deinit { free(answer); armor.deallocate() }
+
+  deinit {
+    free(answer)
+    armor.deallocate()
+  }
+
   static func get(_ rock: krb5_clpreauth_rock?) -> Callbacks {
     Unmanaged<Callbacks>.fromOpaque(UnsafeRawPointer(rock!)).takeUnretainedValue()
   }
@@ -45,23 +51,30 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
   #expect(profile_init(nil, &profile) == 0)
   let p = try #require(profile)
   defer { profile_abandon(p) }
-  for (key, value) in [("realm", "EXAMPLE.ORG")] {
-    let strings = [strdup("kpasskey")!, strdup(key)!]
-    defer { strings.forEach { free($0) } }
-    var names = strings.map { Optional(UnsafePointer($0)) } + [nil]
-    #expect(profile_add_relation(p, &names, value) == 0)
-  }
+
+  let strings = [strdup("kpasskey")!, strdup("realm")!]
+  defer { strings.forEach { free($0) } }
+  var names = strings.map { Optional(UnsafePointer($0)) } + [nil]
+  #expect(profile_add_relation(p, &names, "EXAMPLE.ORG") == 0)
+
   var context: krb5_context?
   #expect(krb5_init_context_profile(p, KRB5_INIT_CONTEXT_SECURE, &context) == 0)
   let ctx = try #require(context)
   defer { krb5_free_context(ctx) }
+
   var client: krb5_principal?
   var server: krb5_principal?
   #expect(krb5_parse_name(ctx, "user@EXAMPLE.ORG", &client) == 0)
   #expect(krb5_parse_name(ctx, "krbtgt/EXAMPLE.ORG@EXAMPLE.ORG", &server) == 0)
-  defer { krb5_free_principal(ctx, client); krb5_free_principal(ctx, server) }
+  defer {
+    krb5_free_principal(ctx, client)
+    krb5_free_principal(ctx, server)
+  }
+
   var request = krb5_kdc_req()
-  request.client = client; request.server = server
+  request.client = client
+  request.server = server
+
   let state = Callbacks()
   let rock = OpaquePointer(Unmanaged.passUnretained(state).toOpaque())
   var callbacks = krb5_clpreauth_callbacks_st()
@@ -73,22 +86,30 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
     return 0
   }
   callbacks.get_responder_answer = { _, rock, _ in Callbacks.get(rock).answer.map { UnsafePointer($0) } }
-  callbacks.set_as_key = { _, rock, _ in Callbacks.get(rock).keySet = true; return 0 }
+  callbacks.set_as_key = { _, rock, _ in
+    Callbacks.get(rock).keySet = true
+    return 0
+  }
   callbacks.disable_fallback = { _, rock in Callbacks.get(rock).fallbackDisabled = true }
+
   var vt = krb5_clpreauth_vtable_st()
   #expect(withUnsafeMutablePointer(to: &vt) { initializePlugin(ctx, 1, 1, OpaquePointer($0)) } == 0)
   let prep = try #require(vt.prep_questions)
   let process = try #require(vt.process)
+
   let challenge = try challengeFixture(["domain": domain])
   try challenge.withUnsafeBytes { bytes in
     var pa = krb5_pa_data()
-    pa.pa_type = 153; pa.length = UInt32(bytes.count)
+    pa.pa_type = 153
+    pa.length = UInt32(bytes.count)
     pa.contents = UnsafeMutablePointer(mutating: bytes.baseAddress!.assumingMemoryBound(to: UInt8.self))
+
     #expect(prep(ctx, nil, nil, nil, &callbacks, rock, &request, nil, nil, &pa) == 0)
     let question = try #require(state.question)
     let original = try decodeWire(question, as: Challenge.self, phase: 1)
     #expect(original.data.domain.utf8.elementsEqual(domain.utf8))
     #expect(original.state == "opaque-state-é")
+
     // strcmp at the KDC distinguishes composed/decomposed Unicode even when Swift == does not.
     for replyState in ["stale-state", "opaque-state-e\u{301}", original.state] {
       let valid = replyState.utf8.elementsEqual(original.state.utf8)
@@ -98,9 +119,13 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
       var output: UnsafeMutablePointer<UnsafeMutablePointer<krb5_pa_data>?>?
       let code = process(ctx, nil, nil, nil, &callbacks, rock, &request, nil, nil, &pa, nil, nil, &output)
       defer {
-        if let item = output?.pointee { free(item.pointee.contents); free(item) }
+        if let item = output?.pointee {
+          free(item.pointee.contents)
+          free(item)
+        }
         free(output)
       }
+
       #expect((code == 0) == valid)
       #expect(state.keySet == valid && state.fallbackDisabled == valid)
       if valid {
@@ -114,8 +139,11 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         #expect(try encoder.encode(actual.data) == encoder.encode(fixtureAssertion(domain: domain)))
-      } else { #expect(output == nil) }
+      } else {
+        #expect(output == nil)
+      }
     }
+
     // A prefix match is insufficient: the request's realm must match in full.
     var other: krb5_principal?
     #expect(krb5_parse_name(ctx, "user@EXAMPLE.ORG.EVIL", &other) == 0)
@@ -124,6 +152,7 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
     #expect(prep(ctx, nil, nil, nil, &callbacks, rock, &request, nil, nil, &pa) == WireError.realmMismatch.rawValue)
     request.client = client
   }
+
   // Preserve the failing check across the plugin ABI without exposing payloads.
   for (bytes, error): (Data, WireError) in [
     (Data(challenge.dropLast()), .framing),
@@ -135,8 +164,10 @@ func responderPluginPreservesKDCProvidedRPAndRejectsRealmAndReplay(domain: Strin
   ] {
     bytes.withUnsafeBytes { buffer in
       var pa = krb5_pa_data()
-      pa.pa_type = 153; pa.length = UInt32(buffer.count)
+      pa.pa_type = 153
+      pa.length = UInt32(buffer.count)
       pa.contents = UnsafeMutablePointer(mutating: buffer.baseAddress!.assumingMemoryBound(to: UInt8.self))
+
       state.question = nil
       #expect(prep(ctx, nil, nil, nil, &callbacks, rock, &request, nil, nil, &pa) == error.rawValue)
       #expect(state.question == nil)

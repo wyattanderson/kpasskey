@@ -8,7 +8,7 @@ swift_library(
     name = "wire",
     module_name = "PasskeyWire",
     srcs = ["Wire.swift"],
-    deps = ["//third_party:libfido2_swift", "//third_party:libcbor_swift"],
+    deps = ["//third_party:libfido2_swift"],
 )
 
 swift_library(
