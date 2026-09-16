@@ -5,7 +5,7 @@ build --compilation_mode=opt
 # Enable modern Swift language/concurrency checking through the selected toolchain.
 build --features=swift.enable_v6
 # Select full Xcode without changing the machine-wide xcode-select setting.
-build --repo_env=DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+# build --repo_env=DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 # Let Bazel derive action/test DEVELOPER_DIR and SDKROOT from discovered Xcode.
 # Explicit action DEVELOPER_DIR makes Bazel's SDK lookup use xcode-select instead.
 build --macos_minimum_os=14.0
