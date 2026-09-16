@@ -74,3 +74,18 @@ import Testing
   #expect(!authentication.isRunning)
   #expect(authentication.ticket == nil)
 }
+
+@Test @MainActor func publishedStatusClearsOnlyWhenItsTicketDisappears() {
+  let authentication = Authentication()
+  let ticket = TicketMetadata(principal: "user@EXAMPLE.INVALID", realm: "EXAMPLE.INVALID",
+    cache: "API:synthetic", expires: 1, renewUntil: 0, forwardable: true, mode: "passkey")
+  let operation = UUID().uuidString
+  authentication.prepare(operation)
+  authentication.receive(Message("terminal", operation: operation, value: "ok", ticket: ticket))
+
+  authentication.clearPublishedStatus(unless: [ticket.cache])
+  #expect(authentication.message.contains("published to macOS"))
+  authentication.clearPublishedStatus(unless: [])
+  #expect(authentication.message == "Ready to sign in.")
+  #expect(authentication.ticket == nil)
+}

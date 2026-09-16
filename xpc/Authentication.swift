@@ -213,6 +213,18 @@ public final class Authentication {
 
   public func disconnect() { client.disconnect() }
 
+  public func clearStatus() {
+    guard !isRunning else { return }
+    terminal = nil
+    ticket = nil
+    message = "Ready to sign in."
+  }
+
+  public func clearPublishedStatus(unless caches: Set<String>) {
+    guard terminal?.value == Status.ok.rawValue, let ticket, !caches.contains(ticket.cache) else { return }
+    clearStatus()
+  }
+
   private func fail(_ error: any Error, operation: String) {
     fail(((error as? ClientFailure)?.status ?? .workerLost).rawValue, operation: operation)
   }

@@ -44,7 +44,10 @@ struct KPasskeyApp: App {
   var body: some Scene {
     Window("Sign In — KPasskey", id: "authentication") {
       AuthenticationView(authentication: authentication, preferences: preferences, tickets: tickets, menuBar: $menuBar)
-        .onDisappear { Task { await authentication.cancel() } }
+        .onDisappear {
+          authentication.clearStatus()
+          Task { await authentication.cancel() }
+        }
     }
     .defaultSize(width: 560, height: 560)
     .windowResizability(.contentSize)
@@ -256,6 +259,9 @@ private struct AuthenticationView: View {
       if shouldWatchDevices { await authentication.watchDevices() }
     }
     .onChange(of: authentication.ticket?.cache) { _, _ in tickets.refresh() }
+    .onChange(of: tickets.tickets) { _, tickets in
+      authentication.clearPublishedStatus(unless: Set(tickets.map(\.cache)))
+    }
   }
 }
 
