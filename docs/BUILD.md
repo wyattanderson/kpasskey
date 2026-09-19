@@ -329,10 +329,11 @@ to cover console interactions, dependency closure and plugin loading.
 
 ## Distribution work
 
-`//:release` builds the application ZIP. See [RELEASING.md](RELEASING.md) for
-SVU tagging, version stamping, the keyless GitHub Actions workflow, and enabling
-Developer ID signing and notarization. Clean-Mac distribution and real hardware
-acceptance remain part of the release criteria.
+`//:release` builds the DMG and checksum from `//app:KPasskey`. See
+[RELEASING.md](RELEASING.md) for SVU tagging, version stamping, the keyless
+GitHub Actions workflow, and enabling Developer ID signing and notarization.
+Clean-Mac distribution and real hardware acceptance remain part of the release
+criteria.
 
 ## Yubico device presentation
 

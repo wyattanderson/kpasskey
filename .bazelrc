@@ -11,7 +11,8 @@ build --features=swift.enable_v6
 build --macos_minimum_os=14.0
 build --action_env=PATH=/usr/bin:/bin:/usr/sbin:/sbin
 build --incompatible_strict_action_env
-build --spawn_strategy=sandboxed
+# Keep ordinary actions sandboxed while allowing explicitly local packaging.
+build --spawn_strategy=sandboxed,local
 # rules_apple marks binary signing no-sandbox; keep compilation sandboxed.
 build --strategy=SignBinary=local
 build --strategy=ProcessAndSign=local

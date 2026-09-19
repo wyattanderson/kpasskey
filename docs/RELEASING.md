@@ -1,9 +1,9 @@
 # Releases
 
-Distribute the arm64 application as a ZIP containing `KPasskey.app`. Finder
-extracts it, and the user moves the app into Applications. The existing Bazel
-bundle includes the worker, plugins, libraries, icons, and license notices;
-a DMG would add packaging without needing an installer.
+Distribute the arm64 application as a DMG with `KPasskey.app` on the left and
+an Applications folder link on the right. The user drags the app onto the link
+to install it. The existing Bazel bundle includes the worker, plugins, libraries,
+icons, and license notices; no installer is needed.
 
 ## Build and version
 
@@ -15,11 +15,12 @@ SVU and piñata are checksummed upstream binaries downloaded by Bazel.
 git fetch origin --tags
 version=$(bazelisk run //:version)
 bazelisk build --embed_label="$version" //:release
-archive=$(bazelisk cquery --embed_label="$version" --output=files //:release)
-bazelisk run //release:prepare -- unsigned "$archive" dist "$version"
 ```
 
-`//:release` builds the app ZIP. `--embed_label` stamps the selected tag into
+`//:release` builds the unsigned DMG and checksum from the internal
+`//app:KPasskey` ZIP. Its packaging action runs locally without Bazel's sandbox
+because Disk Arbitration and Finder must create and arrange the mounted image.
+`--embed_label` stamps the selected tag into
 `CFBundleShortVersionString` and `CFBundleVersion` in both the app and worker.
 The distribution tool rejects a mismatch between either bundle and the release
 version. Unstamped local builds use a zero version. There is no version file
@@ -48,7 +49,7 @@ changes locally; request a manual run when runner-specific behavior needs testin
 Do not push a release tag just to test workflow edits.
 
 Both triggers execute the tests, verify release-policy rejection of ad-hoc peers,
-exercise development XPC, build the stamped archive, and upload an unsigned ZIP
+exercise development XPC, build the stamped archive, and upload an unsigned DMG
 and SHA-256 checksum. Manual runs stop there and never publish or use signing secrets.
 Unsigned means ad-hoc signed for arm64 execution, without Developer ID or
 notarization. The release XPC policy remains enabled, so this archive is for
@@ -73,6 +74,7 @@ Run the same checks as CI locally before spending runner time:
 
 ```sh
 bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //...
+bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //release:archive_tests
 bazelisk test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
 ```
 
@@ -120,7 +122,7 @@ keys, including the discovered toolchain. See GitHub's
 
 The application currently uses no capability that needs a Developer ID
 provisioning profile. No profile, App Store application record, or installer
-certificate is needed for this ZIP distribution.
+certificate is needed for this DMG distribution.
 
 ## Store GitHub secrets
 
@@ -174,8 +176,8 @@ history. Then build and prepare the signed distribution locally:
 
 ```sh
 version=$(bazelisk run //:version)
-bazelisk build --lockfile_mode=error --embed_label="$version" //:release
-archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //:release)
+bazelisk build --lockfile_mode=error --embed_label="$version" //app:KPasskey
+archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //app:KPasskey)
 bazelisk run --lockfile_mode=error //release:prepare -- signed "$archive" dist "$version"
 ```
 
@@ -187,13 +189,12 @@ ordinary app iteration can use the local tests without another notarization.
 The publish job imports the identity into a temporary keychain, signs the
 bundled libraries and plugins followed by the worker and app, enables Hardened
 Runtime and secure timestamps, and checks the real signed XPC connection.
-It submits the app ZIP to Apple, requires notarization acceptance, staples the
-ticket to the app, validates Gatekeeper acceptance, and creates the final ZIP
-and checksum. The temporary keychain and certificate are removed. Signing or
-notarization failure stops publication; it never falls back to unsigned mode.
+It submits a temporary app ZIP to Apple, requires notarization acceptance,
+staples the ticket to the app, validates Gatekeeper acceptance, and creates the
+final DMG and checksum. The temporary keychain and certificate are removed.
+Signing or notarization failure stops publication; it never falls back to unsigned mode.
 
-ZIP files cannot hold a stapled ticket directly, so the final archive is made
-after stapling the application. See Apple's
+The final DMG is made after stapling the application. See Apple's
 [notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 and [signing requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 Before distributing to users, test the downloaded archive on a clean supported

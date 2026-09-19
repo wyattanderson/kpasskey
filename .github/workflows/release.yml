@@ -30,6 +30,8 @@ jobs:
           repository-cache: true
       - name: Test release policy
         run: bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //...
+      - name: Test release disk image
+        run: bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //release:archive_tests
       - name: Test development XPC
         run: bazelisk test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
       - name: Build stamped release archive
@@ -40,12 +42,10 @@ jobs:
           version=$(bazelisk run --lockfile_mode=error //:version)
           if [ "$REF_TYPE" = tag ]; then version="$REF_NAME"; fi
           bazelisk build --lockfile_mode=error --embed_label="$version" //:release
-          archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //:release)
-          bazelisk run --lockfile_mode=error //release:prepare -- unsigned "$archive" dist "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-release
-          path: dist/*
+          path: bazel-bin/release/KPasskey-macos-arm64.dmg*
           if-no-files-found: error
 
   publish:
@@ -67,10 +67,6 @@ jobs:
           repository-cache: true
           # Reuse the build job's outputs without uploading the cache again.
           cache-save: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: unsigned-release
-          path: incoming
       - name: Prepare distribution
         env:
           SIGNING_ENABLED: ${{ vars.RELEASE_SIGNING_ENABLED }}
@@ -84,7 +80,9 @@ jobs:
         run: |
           mode=unsigned
           if [ "$SIGNING_ENABLED" = true ]; then mode=signed; fi
-          bazelisk run --lockfile_mode=error //release:prepare -- "$mode" "incoming/KPasskey-${RELEASE_TAG}-macos-arm64-unsigned.zip" dist "$RELEASE_TAG"
+          bazelisk build --lockfile_mode=error --embed_label="$RELEASE_TAG" //app:KPasskey
+          archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$RELEASE_TAG" --output=files //app:KPasskey)
+          bazelisk run --lockfile_mode=error //release:prepare -- "$mode" "$archive" dist "$RELEASE_TAG"
       - name: Publish release (unsigned builds remain drafts)
         env:
           GH_TOKEN: ${{ github.token }}

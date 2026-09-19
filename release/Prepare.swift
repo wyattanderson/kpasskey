@@ -13,10 +13,12 @@ import Security
 
   static func execute() throws {
     let args = CommandLine.arguments
-    guard args.count == 5, ["unsigned", "signed"].contains(args[1]) else {
-      throw ReleaseError("Usage: prepare unsigned|signed INPUT.zip OUTPUT_DIRECTORY vMAJOR.MINOR.PATCH")
+    let direct = args.count == 4 && args[1] == "dmg"
+    guard direct || (args.count == 5 && ["unsigned", "signed"].contains(args[1])) else {
+      throw ReleaseError("Usage: prepare dmg INPUT.zip OUTPUT.dmg | unsigned|signed INPUT.zip OUTPUT_DIRECTORY vMAJOR.MINOR.PATCH")
     }
-    let version = try releaseVersion(args[4])
+    let tag = direct ? nil : args[4]
+    let version = try tag.map { try releaseVersion($0) }
     let signed = args[1] == "signed"
     let fm = FileManager.default
     let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["BUILD_WORKSPACE_DIRECTORY"] ?? fm.currentDirectoryPath)
@@ -28,23 +30,86 @@ import Security
     try run("/usr/bin/ditto", ["-x", "-k", input.path, temporary.path])
     let app = temporary.appendingPathComponent("KPasskey.app")
     let worker = app.appendingPathComponent("Contents/XPCServices/Worker.xpc")
+    var builtVersion: String?
     for bundle in [app, worker] {
       let info = try PropertyListSerialization.propertyList(
         from: Data(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any]
-      guard info?["CFBundleShortVersionString"] as? String == version,
-        info?["CFBundleVersion"] as? String == version else {
-        throw ReleaseError("Bundle version does not match \(args[4]); build with --embed_label=\(args[4])")
+      guard let shortVersion = info?["CFBundleShortVersionString"] as? String,
+        info?["CFBundleVersion"] as? String == shortVersion,
+        builtVersion == nil || builtVersion == shortVersion else {
+        throw ReleaseError("Application bundle versions do not match")
       }
+      builtVersion = shortVersion
+    }
+    if let tag, let version, builtVersion != version {
+      throw ReleaseError("Bundle version does not match \(tag); build with --embed_label=\(tag)")
     }
     try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], reportOutput: true)
     if signed { try signAndNotarize(app: app, worker: worker, temporary: temporary) }
-    try fm.createDirectory(at: output, withIntermediateDirectories: true)
-    let archive = output.appendingPathComponent("KPasskey-\(args[4])-macos-arm64\(signed ? "" : "-unsigned").zip")
+    let archive: URL
+    if let tag {
+      try fm.createDirectory(at: output, withIntermediateDirectories: true)
+      archive = output.appendingPathComponent(
+        "KPasskey-\(tag)-macos-arm64\(signed ? "" : "-unsigned").dmg")
+    } else {
+      archive = output
+    }
     guard !fm.fileExists(atPath: archive.path) else { throw ReleaseError("Output archive already exists") }
-    try run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app.path, archive.path])
+    try createDiskImage(app: app, at: archive, temporary: temporary)
     let digest = SHA256.hash(data: try Data(contentsOf: archive)).map { String(format: "%02x", $0) }.joined()
     try Data("\(digest)  \(archive.lastPathComponent)\n".utf8).write(to: archive.appendingPathExtension("sha256"))
     print(archive.path)
+  }
+
+  static func createDiskImage(app: URL, at output: URL, temporary: URL) throws {
+    let fm = FileManager.default
+    let staging = temporary.appendingPathComponent("disk")
+    let writable = temporary.appendingPathComponent("writable.dmg")
+    try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+    try fm.moveItem(at: app, to: staging.appendingPathComponent("KPasskey.app"))
+    try fm.createSymbolicLink(atPath: staging.appendingPathComponent("Applications").path,
+      withDestinationPath: "/Applications")
+    try run("/usr/bin/hdiutil", ["create", "-ov", "-format", "UDRW", "-fs", "HFS+",
+      "-volname", "KPasskey", "-srcfolder", staging.path, "-noanyowners", writable.path])
+    let mount = try attach(writable)
+    defer { _ = try? run("/usr/bin/hdiutil", ["detach", mount.path]) }
+
+    // Finder has no supported Swift API for per-folder icon placement, so use
+    // its system scripting interface for this narrowly scoped build step.
+    let layout = """
+      tell application "Finder"
+        tell disk "KPasskey"
+          open
+          set current view of container window to icon view
+          set toolbar visible of container window to false
+          set statusbar visible of container window to false
+          set pathbar visible of container window to false
+          set bounds of container window to {100, 100, 700, 450}
+          set arrangement of icon view options of container window to not arranged
+          set icon size of icon view options of container window to 128
+          set text size of icon view options of container window to 16
+          set position of item "KPasskey.app" of container window to {170, 170}
+          set position of item "Applications" of container window to {430, 170}
+          close container window
+        end tell
+      end tell
+      """
+    try run("/usr/bin/osascript", ["-e", layout], reportOutput: true)
+    try run("/bin/sync", [])
+    try run("/usr/bin/hdiutil", ["detach", mount.path])
+    try run("/usr/bin/hdiutil", ["convert", writable.path, "-format", "UDZO",
+      "-imagekey", "zlib-level=9", "-o", output.path])
+  }
+
+  static func attach(_ image: URL) throws -> URL {
+    let result = try run("/usr/bin/hdiutil", ["attach", "-plist", "-readwrite", "-noverify",
+      "-noautoopen", image.path], reportOutput: true)
+    let plist = try PropertyListSerialization.propertyList(from: Data(result.utf8), format: nil) as? [String: Any]
+    let entities = plist?["system-entities"] as? [[String: Any]]
+    guard let path = entities?.compactMap({ $0["mount-point"] as? String }).first else {
+      throw ReleaseError("hdiutil did not report a mounted volume")
+    }
+    return URL(fileURLWithPath: path)
   }
 
   static func signAndNotarize(app: URL, worker: URL, temporary: URL) throws {

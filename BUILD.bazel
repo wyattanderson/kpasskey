@@ -1,4 +1,9 @@
-alias(name = "release", actual = "//app:KPasskey")
+alias(
+    name = "release",
+    actual = "//release:dmg",
+    tags = ["manual"],
+)
+
 alias(name = "version", actual = "//release:version")
 alias(name = "bump", actual = "//release:bump")
 alias(name = "pin_actions", actual = "//release:pin_actions")

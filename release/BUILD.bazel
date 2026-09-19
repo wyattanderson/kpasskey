@@ -6,9 +6,15 @@ package(default_visibility = ["//visibility:public"])
 [
     swift_binary(
         name = name,
-        srcs = ["Version.swift", "Process.swift"],
+        srcs = [
+            "Process.swift",
+            "Version.swift",
+        ],
+        args = [
+            "$(rootpath " + tool + ")",
+            name,
+        ],
         copts = ["-parse-as-library"],
-        args = ["$(rootpath " + tool + ")", name],
         data = [tool],
     )
     for name, tool in [
@@ -20,15 +26,41 @@ package(default_visibility = ["//visibility:public"])
 
 swift_binary(
     name = "prepare",
-    srcs = ["Prepare.swift", "Process.swift"],
+    srcs = [
+        "Prepare.swift",
+        "Process.swift",
+    ],
     copts = ["-parse-as-library"],
+)
+
+genrule(
+    name = "dmg",
+    srcs = ["//app:KPasskey"],
+    outs = [
+        "KPasskey-macos-arm64.dmg",
+        "KPasskey-macos-arm64.dmg.sha256",
+    ],
+    cmd = "$(location :prepare) dmg $(location //app:KPasskey) $(@D)/KPasskey-macos-arm64.dmg",
+    tags = [
+        "local",
+        "manual",
+        "no-sandbox",
+    ],
+    tools = [":prepare"],
 )
 
 swift_test(
     name = "version_tests",
     size = "small",
-    srcs = ["VersionTests.swift", "Process.swift"],
-    data = [":bump", ":version", "@svu//:svu"],
+    srcs = [
+        "Process.swift",
+        "VersionTests.swift",
+    ],
+    data = [
+        ":bump",
+        ":version",
+        "@svu",
+    ],
     env = {
         "BUMP": "$(rootpath :bump)",
         "VERSION": "$(rootpath :version)",
@@ -39,10 +71,24 @@ swift_test(
 swift_test(
     name = "archive_tests",
     size = "small",
-    srcs = ["ArchiveTests.swift", "Process.swift"],
-    data = [":prepare", "//app:KPasskey"],
+    srcs = [
+        "ArchiveTests.swift",
+        "Process.swift",
+    ],
+    data = [
+        ":KPasskey-macos-arm64.dmg",
+        ":KPasskey-macos-arm64.dmg.sha256",
+        ":prepare",
+        "//app:KPasskey",
+    ],
     env = {
-        "PREPARE": "$(rootpath :prepare)",
         "APP": "$(rootpath //app:KPasskey)",
+        "DMG": "$(rootpath :KPasskey-macos-arm64.dmg)",
+        "PREPARE": "$(rootpath :prepare)",
     },
+    # hdiutil needs Disk Arbitration; the release workflow runs this explicitly.
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
 )
