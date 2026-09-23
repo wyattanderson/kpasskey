@@ -1,85 +1,21 @@
 # KPasskey
 
-A native macOS application for acquiring FreeIPA Kerberos tickets with USB
-FIDO2 security keys. The intended experience is a global shortcut, a small
-native authentication window, and tickets available to existing macOS Kerberos
-consumers.
+**KPasskey** is a native macOS menubar application that implements the [SSSD Passkey Kerberos pre-authentication mechanism](https://sssd.io/design-pages/passkey_kerberos.html). Put another way, it lets you use a USB FIDO2 passkey to obtain a ticket-granting ticket (TGT) from a compatible KDC running `ipa-otpd` (namely, FreeIPA).
 
-Distribution will be a relocatable, Developer ID-signed and notarized `.app`
-bundle published on GitHub Releases. End users must not need Homebrew, a
-terminal, a domain join, or a manually maintained `krb5.conf`.
+![KPasskey](docs/screenshot.png)
 
-See [Releasing](docs/RELEASING.md) for the Bazel ZIP target, semantic version
-tags, GitHub Actions pipeline, and Developer ID secret setup.
+## Background
 
-## Status
+On Linux, passkey Kerberos authentication is supported through the SSSD `sssd_krb5_passkey_plugin`, which works with the `clpreauth` and `kdcpreauth` plugin mechanisms conveniently available in MIT Kerberos. macOS uses Heimdal Kerberos, which has no such convenient plugin mechanism. So, we can't use or extend native macOS `kinit` to support passkeys, but we _can_ obtain a TGT with a passkey via an out-of-band mechanism (like KPasskey) and write it to the `API:` KCM (Kerberos Credential Manager) credential cache via Mach RPC. TGTs obtained in this way are then usable by any macOS-native Kerberos client like Google Chrome and NFS file sharing.
 
-Milestone 1 implements arm64 macOS dependency builds with Bazel, Swift probes
-and Swift Testing, signed `rules_apple` command-line applications, PKINIT
-loading, linkage checks, and relocation tests. Milestone 2 adds shared Swift XPC
-contracts, a client adapter, an embedded fake worker, and a console host app with
-lifecycle and peer-identity tests. Milestone 3 adds password authentication,
-automatic DNS realm/KDC discovery, configurable forwardable tickets and shared
-macOS cache publication, validated live with Apple's `klist` and `kgetcred`.
-Milestone 4 adds the Swift passkey plugin, libfido2 adapter, anonymous PKINIT
-armor and harness interactions. Offline validation passes; live passkey login
-and the hardware matrix remain pending. The first native menu-bar app adds
-sign-in, settings, secure prompts and live shared-cache ticket status, including
-a colored menu-bar badge and cached authentication-method details.
+## How does it work?
 
-See [docs/BUILD.md](docs/BUILD.md) for Xcode setup,
-dependency choices, and clean reproduction. Run `bazel test //...` after
-installing Xcode and completing its first-launch setup. Run
-`bazel test --config=development //...` to exercise the ad-hoc signed XPC peers;
-the default configuration checks that release policy refuses those peers.
+We can't extend Heimdal Kerberos (the native macOS Kerberos client that you get if you run `kinit`) to do what we want, but we _can_ build and extend MIT Kerberos with our own plugin that implements the same passkey preauthentication protocol that FreeIPA expects. Even better, we can package it with `libfido2` in a macOS-native menubar application with some extra conveniences and a nice UI.
 
-Supporting documents describe:
+What we _can't_ do is use macOS AuthenticationServices `ASAuthorization` API (i.e. passkeys backed by Touch ID and the Secure Enclave), because Apple (probably justifiably) is much more restrictive about how those credentials can be used. They can't be used with an arbitrary domain (only a specific one burned and signed into the application), and they only work with the native FIDO2 challenge format, which FreeIPA doesn't use.
 
-- [Architecture and XPC contract](docs/ARCHITECTURE.md)
-- [Application-owned Kerberos configuration](docs/CONFIGURATION.md)
-- [Bazel dependencies, native libraries, and release packaging](docs/BUILD.md)
-- [FreeIPA protocol and assertion implementation](docs/PROTOCOL.md)
+Still, I have a pile of YubiKeys and, for me at least, it makes me feel better about using Kerberos in my homelab.
 
-## Decisions
+## AI Usage Disclosure
 
-- Swift is the primary and mandatory language for all project-owned code,
-  including tests, tools, the worker, harness, adapters, and plugin logic.
-  Use modern Swift tooling, with Swift Testing mandatory for automated tests
-  unless a required testing capability is unavailable. C or Objective-C is
-  allowed only where it is **absolutely and functionally necessary**, with a
-  documented Swift interoperability limitation and the smallest possible shim.
-  Calling a C library or implementing an Objective-C-compatible protocol is
-  not itself an exception. See [AGENTS.md](AGENTS.md) for the full policy.
-- Write a purpose-built MIT krb5 client preauthentication plugin.
-- Preserve compatibility with the FreeIPA KDC protocol, **not** with legacy
-  command lines, helper protocols, build systems, configuration, or internal APIs.
-- Keep MIT krb5 and libfido2. Do not implement Kerberos, CTAP, USB HID framing,
-  or cryptographic primitives ourselves.
-- Use a bundled, unprivileged XPC worker and a shared native client interface.
-  The future UI and an earlier command-line harness use the same worker path.
-- Use Bazel with Bzlmod external repositories. Use `rules_apple` for macOS
-  application and XPC bundles, and `rules_swift` for Swift compilation and tests.
-  Keep upstream dependencies in their upstream languages and build configuration
-  in Bazel; the Swift requirement applies to our implementation.
-- Prefer supported native macOS libraries where practical. A bundled OpenSSL
-  dependency is acceptable; eliminating it must not become a prerequisite.
-- Configure Kerberos through typed application settings and library APIs.
-- Apple/iCloud passkeys, AuthenticationServices passkey integration, the Mac
-  App Store, login integration, and privileged system services are out of scope.
-
-## Planned source layout
-
-The authentication packages and initial native UI exist; release work remains:
-
-```text
-app/             SwiftUI/AppKit menu-bar application and settings
-xpc/             Contracts/client, password/passkey worker, MIT/FIDO adapters, console
-passkey/         Swift PA-REDHAT-PASSKEY plugin, wire format and protocol tests
-third_party/     External repository metadata, BUILD overlays, patches
-build/           Shared Bazel macros, platforms, packaging support
-tests/           Fixtures, build probes, XPC and integration tests
-release/         Signing/notarization automation and release documentation
-```
-
-Keep this directory independently buildable. Do not require sibling source
-trees, lab credentials, absolute checkout paths, or Homebrew libraries.
+I'm a professional software engineer with nearly two decades of experience, but my experience is with distributed systems, not macOS applications. This application was largely written with Codex, but heavily steered and influenced by me.
