@@ -5,7 +5,7 @@ public enum PeerPolicyError: Error { case invalidCode, missingTeam, invalidIdent
 
 public enum PeerPolicy {
   /// XPC evaluates this requirement against the actual peer, on every message.
-  public static func requirement(peer: URL, identifier: String) throws -> String {
+  public static func requirement(peer: URL? = nil, identifier: String) throws -> String {
     guard [hostIdentifier, applicationIdentifier, workerIdentifier, applicationWorkerIdentifier].contains(identifier) else {
       throw PeerPolicyError.invalidIdentity
     }
@@ -29,6 +29,9 @@ public enum PeerPolicy {
       return try releaseRequirement(team: team, identifier: identifier)
     }
     #if DEVELOPMENT_PEERS
+      // A sandboxed service cannot read its enclosing app's signature. Its listener
+      // checks the caller's executable path before using this development fallback.
+      guard let peer else { return "identifier \"\(identifier)\"" }
       var code: SecStaticCode?
       guard SecStaticCodeCreateWithPath(peer as CFURL, [], &code) == errSecSuccess,
         let code, SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess

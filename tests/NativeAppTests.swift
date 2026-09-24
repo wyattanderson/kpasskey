@@ -14,6 +14,14 @@ import Testing
   let moved = root.appendingPathComponent("Relocated KPasskey.app")
   try manager.moveItem(at: original, to: moved)
   try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", moved.path])
+  for (bundle, entitlement) in [
+    (moved, "com.apple.security.files.user-selected.read-only"),
+    (moved.appendingPathComponent("Contents/XPCServices/Worker.xpc"), "com.apple.security.device.usb"),
+  ] {
+    let signed = try run("/usr/bin/codesign", ["-d", "--entitlements", ":-", bundle.path])
+    #expect(signed.contains("com.apple.security.app-sandbox"))
+    #expect(signed.contains(entitlement))
+  }
   let info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf:
     moved.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any])
   #expect(info["CFBundleIdentifier"] as? String == "org.kpasskey.KPasskey")
@@ -31,7 +39,7 @@ import Testing
   #expect(workerInfo["CFBundleVersion"] as? String == version)
   #expect((workerInfo["XPCService"] as? [String: Any])?["JoinExistingSession"] as? Bool == true)
   for plugin in ["kpasskey.dylib", "pkinit.so"] {
-    #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/PlugIns/" + plugin).path))
+    #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/XPCServices/Worker.xpc/Contents/PlugIns/" + plugin).path))
   }
   for resource in ["sky3.png", "skycnfc.png", "yk5cnfc.png"] {
     #expect(manager.fileExists(atPath: moved.appendingPathComponent("Contents/Resources/icons/" + resource).path))
@@ -46,6 +54,7 @@ import Testing
     let output = try run(executable.path, ["--check-worker"], environment: [:])
     #expect(output.contains("separate process: true"))
     #expect(output.contains("Device inventory available: true"))
+    #expect(output.contains("Shared cache available: true"))
     let imposter = moved.appendingPathComponent("Contents/MacOS/Imposter")
     try manager.copyItem(at: executable, to: imposter)
     try run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", "org.kpasskey.KPasskey",

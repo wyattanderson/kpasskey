@@ -13,9 +13,7 @@ public struct PasskeyPlugins: Sendable {
   }
 
   public static func bundled() -> PasskeyPlugins {
-    let host = Bundle.main.bundleURL.deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    let directory = host.appendingPathComponent("Contents/PlugIns")
+    let directory = Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns")
     return PasskeyPlugins(passkey: directory.appendingPathComponent("kpasskey.dylib").path,
                           pkinit: directory.appendingPathComponent("pkinit.so").path)
   }

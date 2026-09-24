@@ -229,9 +229,9 @@ on each accepted connection before exported methods execute.
 
 The native app and harness have separate, explicitly allowed host/service
 identifiers. Each bundles the same worker implementation under its own service
-identifier. The worker reads its enclosing bundle's identifier, checks it against
-the fixed host allow-list and constructs the signing requirement for that exact
-host. Bundle metadata alone never authorizes a connection.
+identifier. The worker maps its own signed service identifier to the expected
+host identifier and constructs the signing requirement for that host. Bundle
+metadata alone never authorizes a connection.
 
 Release/default builds require an Apple-anchored peer with the expected signing
 identifier and the same Team ID as the running endpoint. The Team ID comes
@@ -240,10 +240,27 @@ environment variable. Missing Team ID fails closed for ad-hoc code. Positive
 Developer ID signing, notarization and oldest-OS testing remain release work.
 
 `--config=development` explicitly compiles the ad-hoc fallback. With no Team
-ID it verifies the expected bundled peer, reads its code hash and requires that
-exact identifier/hash. Host and worker locate each other by bundle layout, so
-relocation preserves trust. This policy trusts the developer-controlled bundle
-on disk; replacing that entire bundle replaces its development trust roots.
+ID the host pins the bundled worker's code hash. The sandboxed worker cannot
+read the host's bundle, so its listener requires the caller's executable path
+to match its enclosing bundle and enforces the expected signing identifier.
+Relocation preserves these checks. This policy trusts the developer-controlled
+bundle on disk; replacing that entire bundle replaces its development trust roots.
 It is not the distribution trust policy. Team-signed development builds still
 use the release requirement. Tests cover the genuine peer, a differently signed
 imposter claiming the same identifier, and default-policy ad-hoc rejection.
+
+## App Sandbox
+
+The native app and each worker have separate App Sandbox entitlements in their
+Bazel targets. The app can read files selected through `NSOpenPanel`; the worker
+can use outbound networking, UDP replies and USB HID devices. Passkey plugins
+live in the worker's own bundle, and its temporary PKINIT trust file lives in
+its sandbox. Neither process has blanket access to the other's container.
+The worker retains `JoinExistingSession` for the shared macOS API credential
+cache. Sandbox capabilities are broad: network access is not limited to a KDC
+and USB access is not limited to a particular security key.
+
+Local development tests verify signed entitlements, XPC peer checks, device
+enumeration and an app-side read of the shared cache collection. A real KDC
+and physical key are still needed to verify passkey authentication, worker-side
+API-cache publication and use of the published ticket by another application.

@@ -65,7 +65,7 @@ bazel --nosystem_rc --nohome_rc --output_base="$kpasskey_output_base" test --nof
 These direct Bazel commands ignore user/system bazelrc files, use a fresh output base,
 fetch `//...` with the committed lockfile, then test `//...` with `--nofetch`
 and `--lockfile_mode=error`. Repository downloads occur during fetch only.
-Compilation and test actions use the Darwin sandbox with network access
+Compilation and most test actions use the Darwin sandbox with network access
 disabled. rules_apple marks `SignBinary` and `ProcessAndSign` actions
 `no-sandbox`, so those signing mnemonics use the local strategy. A shared
 Bazel repository download cache may satisfy checksummed fetches; there is no
@@ -93,8 +93,9 @@ that the default policy refuses the ad-hoc host. With development enabled it
 launches the actual console executable, exchanges messages with launchd's
 embedded worker, moves the signed host to a path containing spaces, and repeats
 the lifecycle checks in an empty environment. Both modes must pass. Tests use
-Swift Testing and remain in the Darwin sandbox; XPC integration is local to this
-Mac's per-user launchd and is excluded from remote execution.
+Swift Testing. XPC integration stays in the Darwin sandbox and is local to this
+Mac's per-user launchd. The native-app test runs locally outside Bazel's Darwin
+sandbox because App Sandbox cannot initialize inside it.
 
 The harness archive contains `KPasskeyHarness.app`, with `Worker.xpc` in
 `Contents/XPCServices`. Extract the Bazel archive with macOS `ditto` and run
@@ -137,7 +138,7 @@ The console harness is a development tool, not the finished native application.
 ## Passkey artifacts and harness
 
 `//passkey:kpasskey` links the Swift C entry point as a signed macOS dylib.
-rules_apple embeds it beside stock PKINIT in `Contents/PlugIns`; both use the
+rules_apple embeds it beside stock PKINIT in `Worker.xpc/Contents/PlugIns`; both use the
 host's declared MIT/OpenSSL runtime. A small Swift build action extracts only
 `pkinit.so` from rules_foreign_cc's installation tree, which cannot be selected
 as an individual source label. No shell wrapper, SSSD build or checkout-relative
@@ -323,7 +324,8 @@ passwords and PINs remain transient.
 `bazel test --config=development //:native` checks shared presentation/secret
 validation, settings persistence and the relocated native bundle's XPC identity.
 The app's `Contents/MacOS/KPasskey --check-worker` diagnostic negotiates with the
-worker and exits without accessing a KDC, key or credential cache. The default
+worker and reads the shared credential cache collection without contacting a
+KDC or security key. The default
 test configuration verifies rejection of ad-hoc peers. The full suite continues
 to cover console interactions, dependency closure and plugin loading.
 

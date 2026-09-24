@@ -1,15 +1,26 @@
+import Darwin
 import Foundation
 import KPasskeyContract
 import KPasskeyWorker
 
 private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
   let requirement: String
-  init(requirement: String) { self.requirement = requirement }
+  let hostExecutable: String
+  init(requirement: String, hostExecutable: String) {
+    self.requirement = requirement
+    self.hostExecutable = hostExecutable
+  }
 
   func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection)
     -> Bool
   {
     guard connection.effectiveUserIdentifier == geteuid() else { return false }
+    #if DEVELOPMENT_PEERS
+      var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+      guard proc_pidpath(connection.processIdentifier, &path, UInt32(path.count)) > 0,
+        path.withUnsafeBufferPointer({ String(cString: $0.baseAddress!) }) == hostExecutable
+      else { return false }
+    #endif
     connection.setCodeSigningRequirement(requirement)
     connection.exportedInterface = workerInterface()
     connection.remoteObjectInterface = clientInterface()
@@ -46,11 +57,15 @@ struct WorkerMain {
     // Worker.xpc is always nested directly in its owning application's XPCServices directory.
     let host = Bundle.main.bundleURL.deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-    guard let identifier = Bundle(url: host)?.bundleIdentifier,
-      [hostIdentifier, applicationIdentifier].contains(identifier)
-    else { throw PeerPolicyError.invalidIdentity }
+    let identifier = switch Bundle.main.bundleIdentifier {
+    case workerIdentifier: hostIdentifier
+    case applicationWorkerIdentifier: applicationIdentifier
+    default: throw PeerPolicyError.invalidIdentity
+    }
     let delegate = try ListenerDelegate(
-      requirement: PeerPolicy.requirement(peer: host, identifier: identifier))
+      requirement: PeerPolicy.requirement(identifier: identifier),
+      hostExecutable: host.appendingPathComponent("Contents/MacOS/" +
+        (identifier == hostIdentifier ? "KPasskeyHarness" : "KPasskey")).path)
     let listener = NSXPCListener.service()
     listener.delegate = delegate
     withExtendedLifetime(delegate) { listener.resume() }

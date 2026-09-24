@@ -19,6 +19,8 @@ struct KPasskeyMain {
           print("Connected to embedded worker in a separate process: \(client.workerPID != getpid())")
           let devices = try await client.devices()
           print("Device inventory available: \(devices.allSatisfy(\.valid))")
+          _ = try TicketCache.read()
+          print("Shared cache available: true")
           client.disconnect()
           exit(0)
         } catch {

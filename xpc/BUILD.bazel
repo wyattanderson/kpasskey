@@ -58,13 +58,16 @@ swift_library(
     name = "worker_main",
     srcs = ["WorkerMain.swift"],
     copts = ["-parse-as-library"],
+    defines = select({":development_peers": ["DEVELOPMENT_PEERS"], "//conditions:default": []}),
     deps = [":contract", ":worker"],
 )
 
 macos_xpc_service(
     name = "worker_service",
+    additional_contents = {"//passkey:kpasskey": "PlugIns", ":pkinit_plugin": "PlugIns"},
     bundle_name = "Worker",
     bundle_id = "org.kpasskey.harness.worker",
+    entitlements = "Worker.entitlements",
     infoplists = ["Worker.plist"],
     minimum_os_version = "14.0",
     deps = [":worker_main"],
@@ -84,7 +87,6 @@ macos_application(
     infoplists = ["Host.plist"],
     minimum_os_version = "14.0",
     xpc_services = [":worker_service"],
-    additional_contents = {"//passkey:kpasskey": "PlugIns", ":pkinit_plugin": "PlugIns"},
     deps = [":harness_main", "//third_party:krb5"],
 )
 

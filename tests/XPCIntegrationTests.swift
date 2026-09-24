@@ -38,7 +38,7 @@ import Testing
   try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", moved.path])
   for (file, entry) in [("kpasskey.dylib", "clpreauth_kpasskey_initvt"),
                          ("pkinit.so", "clpreauth_pkinit_initvt")] {
-    let path = moved.appendingPathComponent("Contents/PlugIns/" + file)
+    let path = moved.appendingPathComponent("Contents/XPCServices/Worker.xpc/Contents/PlugIns/" + file)
     let handle = try #require(dlopen(path.path, RTLD_NOW | RTLD_LOCAL))
     defer { dlclose(handle) }
     #expect(dlsym(handle, entry) != nil)
@@ -49,7 +49,7 @@ import Testing
       $0.hasPrefix("@rpath/") || $0.hasPrefix("/usr/lib/") || $0.hasPrefix("/System/Library/")
     })
   }
-  try verifyPasskeyLoader(moved.appendingPathComponent("Contents/PlugIns/kpasskey.dylib"))
+  try verifyPasskeyLoader(moved.appendingPathComponent("Contents/XPCServices/Worker.xpc/Contents/PlugIns/kpasskey.dylib"))
   for path in [hostPath, workerPath] {
     #expect(
       try dependencies(of: moved.appendingPathComponent(path)).allSatisfy {
@@ -86,7 +86,7 @@ import Testing
     #expect(events.filter { $0[3] == "terminal" }.map { $0[4] } == [status])
   }
 
-  // Same claimed signing identifier, different actual code hash: the worker must reject it.
+  // Same claimed signing identifier, different executable path: the worker must reject it.
   let imposter = moved.appendingPathComponent("Contents/MacOS/Imposter")
   try manager.copyItem(at: moved.appendingPathComponent(hostPath), to: imposter)
   try run(

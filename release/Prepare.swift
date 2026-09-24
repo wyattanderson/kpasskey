@@ -154,7 +154,7 @@ import Security
 
     // The app's entire dynamic-code closure lives in these two directories.
     // Sign code inside out; --deep is for verification, never for signing.
-    for directory in ["Contents/Frameworks", "Contents/PlugIns"] {
+    for directory in ["Contents/Frameworks", "Contents/XPCServices/Worker.xpc/Contents/PlugIns"] {
       let files = try FileManager.default.contentsOfDirectory(
         at: app.appendingPathComponent(directory), includingPropertiesForKeys: [.isSymbolicLinkKey])
       for file in files.sorted(by: { $0.path < $1.path }) {
@@ -187,6 +187,6 @@ import Security
   static func sign(_ file: URL, identity: String, keychain: URL) throws {
     FileHandle.standardError.write(Data("Signing \(file.lastPathComponent)\n".utf8))
     try run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain.path,
-      "--options", "runtime", "--timestamp", file.path], reportOutput: true)
+      "--options", "runtime", "--preserve-metadata=entitlements", "--timestamp", file.path], reportOutput: true)
   }
 }

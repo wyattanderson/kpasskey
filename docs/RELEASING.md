@@ -187,8 +187,9 @@ GitHub release. Use it when signing or packaging changes require a real check;
 ordinary app iteration can use the local tests without another notarization.
 
 The publish job imports the identity into a temporary keychain, signs the
-bundled libraries and plugins followed by the worker and app, enables Hardened
-Runtime and secure timestamps, and checks the real signed XPC connection.
+bundled libraries and worker plugins followed by the worker and app, preserves
+their Bazel App Sandbox entitlements, enables Hardened Runtime and secure
+timestamps, and checks the real signed XPC connection.
 It submits a temporary app ZIP to Apple, requires notarization acceptance,
 staples the ticket to the app, validates Gatekeeper acceptance, and creates the
 final DMG and checksum. The temporary keychain and certificate are removed.

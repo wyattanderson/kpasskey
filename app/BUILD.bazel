@@ -58,8 +58,13 @@ swift_library(
 
 macos_xpc_service(
     name = "worker_service",
+    additional_contents = {
+        "//passkey:kpasskey": "PlugIns",
+        "//xpc:pkinit_plugin": "PlugIns",
+    },
     bundle_id = "org.kpasskey.KPasskey.worker",
     bundle_name = "Worker",
+    entitlements = "//xpc:Worker.entitlements",
     infoplists = ["//xpc:Worker.plist"],
     minimum_os_version = "14.0",
     stamp = 1,
@@ -69,12 +74,9 @@ macos_xpc_service(
 
 macos_application(
     name = "KPasskey",
-    additional_contents = {
-        "//passkey:kpasskey": "PlugIns",
-        "//xpc:pkinit_plugin": "PlugIns",
-    },
     bundle_id = "org.kpasskey.KPasskey",
     bundle_name = "KPasskey",
+    entitlements = "App.entitlements",
     infoplists = ["Info.plist"],
     minimum_os_version = "14.0",
     resources = [":icons", "Resources/AppIcon.icns", "//third_party:license_notices"],

@@ -19,7 +19,8 @@ swift_test(
         },
     }),
     data = ["//app:KPasskey"],
-    tags = ["no-remote"],
+    # App Sandbox cannot initialize inside Bazel's Darwin sandbox.
+    tags = ["no-remote", "no-sandbox"],
     deps = [":build_test_support"],
 )
 
