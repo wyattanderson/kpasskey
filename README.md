@@ -4,6 +4,12 @@
 
 ![KPasskey](docs/screenshot.png)
 
+## Using KPasskey
+
+You'll need an Apple Silicon Mac, a USB FIDO2 key already enrolled for your account, and a compatible KDC with passkey authentication and anonymous PKINIT enabled. You'll also need the realm's CA certificate from your administrator so KPasskey can verify that it's talking to the right KDC.
+
+Download the DMG from [Releases](https://github.com/wyattanderson/kpasskey/releases) and drag KPasskey into Applications. If you'd rather build it yourself, the [build and release guide](docs/BUILD.md) covers local builds and signing.
+
 ## Background
 
 On Linux, passkey Kerberos authentication is supported through the SSSD `sssd_krb5_passkey_plugin`, which works with the `clpreauth` and `kdcpreauth` plugin mechanisms conveniently available in MIT Kerberos. macOS uses Heimdal Kerberos, which has no such convenient plugin mechanism. So, we can't use or extend native macOS `kinit` to support passkeys, but we _can_ obtain a TGT with a passkey via an out-of-band mechanism (like KPasskey) and write it to the `API:` KCM (Kerberos Credential Manager) credential cache via Mach RPC. TGTs obtained in this way are then usable by any macOS-native Kerberos client like Google Chrome and NFS file sharing.
@@ -15,6 +21,12 @@ We can't extend Heimdal Kerberos (the native macOS Kerberos client that you get 
 What we _can't_ do is use macOS AuthenticationServices `ASAuthorization` API (i.e. passkeys backed by Touch ID and the Secure Enclave), because Apple (probably justifiably) is much more restrictive about how those credentials can be used. They can't be used with an arbitrary domain (only a specific one burned and signed into the application), and they only work with the native FIDO2 challenge format, which FreeIPA doesn't use.
 
 Still, I have a pile of YubiKeys and, for me at least, it makes me feel better about using Kerberos in my homelab.
+
+## Security
+
+Both the KPasskey interactive [application](app/App.entitlements) and [worker process](xpc/Worker.entitlements) are sandboxed. The underlying Kerberos exchange is all powered by MIT `krb5` and `libfido2`.
+
+Passkey sign-in verifies the KDC before asking your key to authenticate, and won't fall back to a password. Passwords and PINs aren't saved. There's more about the authentication flow, how tickets reach other macOS applications, and the security and compatibility tradeoffs in [How KPasskey works](docs/ARCHITECTURE.md).
 
 ## AI Usage Disclosure
 
