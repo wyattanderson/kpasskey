@@ -2,7 +2,9 @@
 
 **KPasskey** is a native macOS menubar application that implements the [SSSD Passkey Kerberos pre-authentication mechanism](https://sssd.io/design-pages/passkey_kerberos.html). Put another way, it lets you use a USB FIDO2 passkey to obtain a ticket-granting ticket (TGT) from a compatible KDC running `ipa-otpd` (namely, FreeIPA).
 
-<img src="docs/screenshot.png" width="672" height="647" alt="KPasskey" />
+<p align="center">
+    <img src="docs/screenshot.png" width="672" height="647" alt="KPasskey" />
+</p>
 
 ## Using KPasskey
 
