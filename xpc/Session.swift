@@ -3,270 +3,297 @@ import KPasskeyContract
 
 /// All state and timers run on the main actor; XPC dispatch never waits for an interaction.
 @MainActor
+// One actor-isolated XPC lifecycle state machine; splitting it obscures transitions.
+// swiftlint:disable:next type_body_length
 public final class WorkerSession: NSObject, WorkerProtocol {
-  // One native operation process-wide, including one draining after cancellation.
-  private static var kerberosBusy = false
-  private static var metadataBusy = false
-  private var gate: PublicationGate?
-  private var nativeWork: Task<Void, Never>?
-  private var passkeyInteraction: PasskeyInteraction?
-  private var deviceCount = 0
-  private var keys: [DiscoveredKey] = []
-  private var discovery: Task<Message, Never>?
-  private var selectedPath: String?
-  private var negotiated = false
-  private var connected = true
-  private var active: Message?
-  private var interaction = ""
-  private var stage = ""
-  private var sequence = 0
-  private var deadline: Task<Void, Never>?
-  private var expires = ContinuousClock.now
-  // Bounded replay protection: reconnect after 1,024 operations.
-  private var used = Set<String>()
-  private let emit: @MainActor (Message) -> Void
-  private let terminateBlockedWorker: @MainActor () -> Void
+    // One native operation process-wide, including one draining after cancellation.
+    private static var kerberosBusy = false
+    private static var metadataBusy = false
+    private var gate: PublicationGate?
+    private var nativeWork: Task<Void, Never>?
+    private var passkeyInteraction: PasskeyInteraction?
+    private var deviceCount = 0
+    private var keys: [DiscoveredKey] = []
+    private var discovery: Task<Message, Never>?
+    private var selectedPath: String?
+    private var negotiated = false
+    private var connected = true
+    private var active: Message?
+    private var interaction = ""
+    private var stage = ""
+    private var sequence = 0
+    private var deadline: Task<Void, Never>?
+    private var expires = ContinuousClock.now
+    // Bounded replay protection: reconnect after 1,024 operations.
+    private var used = Set<String>()
+    private let emit: @MainActor (Message) -> Void
+    private let terminateBlockedWorker: @MainActor () -> Void
 
-  public init(terminateBlockedWorker: @escaping @MainActor () -> Void = {},
-              emit: @escaping @MainActor (Message) -> Void) {
-    self.emit = emit
-    self.terminateBlockedWorker = terminateBlockedWorker
-  }
-
-  nonisolated public func exchange(_ message: Message, reply: @escaping @Sendable (Message) -> Void)
-  {
-    Task { @MainActor in
-      if message.kind == "devices", message.validCommand, message.version == 4,
-        connected, negotiated {
-        if let discovery {
-          reply(await discovery.value)
-          return
-        }
-
-        let previous = keys
-        let enrich = !Self.kerberosBusy && !Self.metadataBusy
-        if enrich { Self.metadataBusy = true }
-
-        let task = Task { @MainActor in
-          let result = await Task.detached {
-            Result { try discoverKeys(previous: previous, enrich: enrich) }
-          }.value
-          if enrich { Self.metadataBusy = false }
-
-          switch result {
-          case .success(let keys):
-            self.keys = keys
-            return Message("devices", devices: keys.map(\.key))
-          case .failure: return Message("ack", value: Status.deviceFailure.rawValue)
-          }
-        }
-        discovery = task
-        let result = await task.value
-        discovery = nil
-        reply(result)
-      } else {
-        // Complete metadata reads before authentication opens the selected device.
-        if message.kind == "start", let discovery { _ = await discovery.value }
-        reply(handle(message))
-      }
+    public init(terminateBlockedWorker: @escaping @MainActor () -> Void = {},
+                emit: @escaping @MainActor (Message) -> Void) {
+        self.emit = emit
+        self.terminateBlockedWorker = terminateBlockedWorker
     }
-  }
 
-  public func handle(_ message: Message) -> Message {
-    func answer(_ status: Status, kind: String = "ack") -> Message {
-      Message(kind, operation: message.operation, value: status.rawValue)
-    }
-    guard connected, message.validCommand else { return answer(.protocolViolation) }
-    guard message.version == 4 else { return answer(.unsupportedVersion) }
-    if message.kind == "negotiate" {
-      negotiated = true
-      return Message("negotiated", value: "fake,password,passkey,devices", sequence: Int(getpid()))
-    }
-    guard negotiated else { return answer(.protocolViolation) }
+    public nonisolated func exchange(_ message: Message, reply: @escaping @Sendable (Message) -> Void) {
+        Task { @MainActor in
+            if message.kind == "devices", message.validCommand, message.version == 4,
+               connected, negotiated {
+                if let discovery {
+                    await reply(discovery.value)
+                    return
+                }
 
-    switch message.kind {
-    case "start":
-      guard active == nil, !Self.kerberosBusy, !Self.metadataBusy else {
-        return answer(.busy)
-      }
-      guard let snapshot = message.snapshot else { return answer(.protocolViolation) }
+                let previous = keys
+                let enrich = !Self.kerberosBusy && !Self.metadataBusy
+                if enrich {
+                    Self.metadataBusy = true
+                }
 
-      selectedPath = nil
-      if !snapshot.selectedDevice.isEmpty {
-        let token = snapshot.selectedDevice
-        guard let key = keys.first(where: { $0.key.id == token }) else { return answer(.deviceRemoved) }
-        selectedPath = key.path
-      }
+                let task = Task { @MainActor in
+                    let result = await Task.detached {
+                        Result { try discoverKeys(previous: previous, enrich: enrich) }
+                    }.value
+                    if enrich {
+                        Self.metadataBusy = false
+                    }
 
-      guard used.count < 1024, used.insert(message.operation).inserted else {
-        return answer(.protocolViolation)
-      }
-
-      active = message
-      expires = .now.advanced(by: .milliseconds(snapshot.timeoutMilliseconds))
-      sequence = 0
-      event("progress", value: "started")
-
-      if let configuration = snapshot.configuration {
-        Self.kerberosBusy = true
-        gate = PublicationGate(deadline: expires)
-        if configuration.mode == .passkey {
-          beginNative()
-        } else {
-          prompt("password")
+                    switch result {
+                    case let .success(keys):
+                        self.keys = keys
+                        return Message("devices", devices: keys.map(\.key))
+                    case .failure: return Message("ack", value: Status.deviceFailure.rawValue)
+                    }
+                }
+                discovery = task
+                let result = await task.value
+                discovery = nil
+                reply(result)
+            } else {
+                // Complete metadata reads before authentication opens the selected device.
+                if message.kind == "start", let discovery {
+                    _ = await discovery.value
+                }
+                reply(handle(message))
+            }
         }
-      } else {
-        prompt("selectKey")
-      }
+    }
 
-      deadline = Task { [weak self] in
-        do { try await Task.sleep(for: .milliseconds(snapshot.timeoutMilliseconds)) } catch { return }
-        self?.stop(.deadlineExceeded)
-      }
-      return answer(.ok)
+    public func handle(_ message: Message) -> Message {
+        func answer(_ status: Status, kind: String = "ack") -> Message {
+            Message(kind, operation: message.operation, value: status.rawValue)
+        }
+        guard connected, message.validCommand else { return answer(.protocolViolation) }
+        guard message.version == 4 else { return answer(.unsupportedVersion) }
+        if message.kind == "negotiate" {
+            negotiated = true
+            return Message("negotiated", value: "fake,password,passkey,devices", sequence: Int(getpid()))
+        }
+        guard negotiated else { return answer(.protocolViolation) }
 
-    case "respond":
-      if active != nil && ContinuousClock.now >= expires { stop(.deadlineExceeded) }
-      guard active?.operation == message.operation, interaction == message.interaction else {
-        return answer(.staleInteraction)
-      }
+        switch message.kind {
+        case "start":
+            guard active == nil, !Self.kerberosBusy, !Self.metadataBusy else {
+                return answer(.busy)
+            }
+            guard let snapshot = message.snapshot else { return answer(.protocolViolation) }
 
-      if let passkeyInteraction {
-        guard (stage == "pin" && message.secret.map { $0.count <= 63 } == true)
-          || (stage == "selectDevice" && message.secret == nil
-            && (0..<deviceCount).contains(where: { message.value == "device-\($0)" }))
-        else { return answer(.protocolViolation) }
+            selectedPath = nil
+            if !snapshot.selectedDevice.isEmpty {
+                let token = snapshot.selectedDevice
+                guard let key = keys.first(where: { $0.key.id == token }) else { return answer(.deviceRemoved) }
+                selectedPath = key.path
+            }
 
+            guard used.count < 1024, used.insert(message.operation).inserted else {
+                return answer(.protocolViolation)
+            }
+
+            active = message
+            expires = .now.advanced(by: .milliseconds(snapshot.timeoutMilliseconds))
+            sequence = 0
+            event("progress", value: "started")
+
+            if let configuration = snapshot.configuration {
+                Self.kerberosBusy = true
+                gate = PublicationGate(deadline: expires)
+                if configuration.mode == .passkey {
+                    beginNative()
+                } else {
+                    prompt("password")
+                }
+            } else {
+                prompt("selectKey")
+            }
+
+            deadline = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(snapshot.timeoutMilliseconds)) } catch { return }
+                self?.stop(.deadlineExceeded)
+            }
+            return answer(.success)
+
+        case "respond":
+            if active != nil, ContinuousClock.now >= expires {
+                stop(.deadlineExceeded)
+            }
+            guard active?.operation == message.operation, interaction == message.interaction else {
+                return answer(.staleInteraction)
+            }
+
+            if let passkeyInteraction {
+                guard (stage == "pin" && message.secret.map { $0.count <= 63 } == true)
+                    || (stage == "selectDevice" && message.secret == nil
+                        && (0 ..< deviceCount).contains(where: { message.value == "device-\($0)" }))
+                else { return answer(.protocolViolation) }
+
+                interaction = ""
+                stage = "authenticating"
+                passkeyInteraction.respond(message)
+                return answer(.success)
+            }
+
+            if stage == "password" {
+                guard let secret = message.secret, message.value.isEmpty,
+                      active?.snapshot?.configuration != nil, gate != nil
+                else {
+                    return answer(.protocolViolation)
+                }
+                beginNative(password: secret)
+                return answer(.success)
+            }
+
+            guard
+                message.secret == nil, (stage == "selectKey" && message.value == "key-1")
+                || (stage == "touch" && message.value == "continue")
+            else { return answer(.protocolViolation) }
+
+            if stage == "selectKey" {
+                prompt("touch")
+            } else {
+                finish(active?.snapshot?.outcome == "success" ? .success : .scriptedFailure)
+            }
+            return answer(.success)
+
+        case "cancel":
+            if active?.operation == message.operation {
+                stop(.cancelled)
+            }
+            return answer(.success)
+
+        default: return answer(.protocolViolation)
+        }
+    }
+
+    private func beginNative(password: Data? = nil) {
+        guard let configuration = active?.snapshot?.configuration, let gate else { return }
         interaction = ""
         stage = "authenticating"
-        passkeyInteraction.respond(message)
-        return answer(.ok)
-      }
-
-      if stage == "password" {
-        guard let secret = message.secret, message.value.isEmpty,
-          active?.snapshot?.configuration != nil, gate != nil else {
-          return answer(.protocolViolation)
+        event("progress", value: stage)
+        let bridge = PasskeyInteraction(gate: gate, deadline: expires,
+                                        selectedPath: selectedPath) { [weak self] stage, choices in
+            Task { @MainActor in
+                guard let self, self.gate === gate, self.active != nil else { return }
+                if ["pin", "selectDevice"].contains(stage) {
+                    self.deviceCount = choices.count
+                    self.prompt(stage, choices: choices)
+                } else {
+                    self.event("progress", value: stage)
+                }
+            }
         }
-        beginNative(password: secret)
-        return answer(.ok)
-      }
-
-      guard
-        message.secret == nil && ((stage == "selectKey" && message.value == "key-1")
-          || (stage == "touch" && message.value == "continue"))
-      else { return answer(.protocolViolation) }
-
-      if stage == "selectKey" {
-        prompt("touch")
-      } else {
-        finish(active?.snapshot?.outcome == "success" ? .ok : .scriptedFailure)
-      }
-      return answer(.ok)
-
-    case "cancel":
-      if active?.operation == message.operation { stop(.cancelled) }
-      return answer(.ok)
-
-    default: return answer(.protocolViolation)
-    }
-  }
-
-  private func beginNative(password: Data? = nil) {
-    guard let configuration = active?.snapshot?.configuration, let gate else { return }
-    interaction = ""
-    stage = "authenticating"
-    event("progress", value: stage)
-    let bridge = PasskeyInteraction(gate: gate, deadline: expires, selectedPath: selectedPath) { [weak self] stage, choices in
-      Task { @MainActor in
-        guard let self, self.gate === gate, self.active != nil else { return }
-        if ["pin", "selectDevice"].contains(stage) {
-          self.deviceCount = choices.count
-          self.prompt(stage, choices: choices)
-        } else { self.event("progress", value: stage) }
-      }
-    }
-    if configuration.mode == .passkey { passkeyInteraction = bridge }
-    nativeWork = Task { [self] in
-      let result = await Task.detached {
-        Result {
-          if let password { return try acquirePassword(configuration, password: password, gate: gate) }
-          return try acquirePasskey(configuration, interaction: bridge)
+        if configuration.mode == .passkey {
+            passkeyInteraction = bridge
         }
-      }.value
-      nativeWork = nil
-      Self.kerberosBusy = false
-      self.gate = nil
-      passkeyInteraction = nil
+        nativeWork = Task { [self] in
+            let result = await Task.detached {
+                Result {
+                    if let password {
+                        return try acquirePassword(configuration, password: password, gate: gate)
+                    }
+                    return try acquirePasskey(configuration, interaction: bridge)
+                }
+            }.value
+            nativeWork = nil
+            Self.kerberosBusy = false
+            self.gate = nil
+            passkeyInteraction = nil
 
-      guard active != nil else { return }
-      switch result {
-      case .success(let ticket): finish(.ok, ticket: ticket)
-      case .failure(let error):
-        let failure = error as? KerberosFailure ?? KerberosFailure(.authenticationFailed)
-        finish(failure.status, code: failure.code)
-      }
-    }
-  }
-
-  public func disconnect() {
-    connected = false
-    stop(.disconnected)
-    deadline?.cancel()
-    deadline = nil
-    active = nil
-    interaction = ""
-    used.removeAll()
-    keys.removeAll()
-  }
-
-  private func stop(_ status: Status) {
-    // Once publication begins, cancellation cannot turn a committed ticket into a cancelled result.
-    if let gate, !gate.cancel() { return }
-    passkeyInteraction?.cancel()
-    if let gate, nativeWork != nil {
-      Task { [self] in
-        try? await Task.sleep(for: .milliseconds(750))
-        if self.gate === gate && nativeWork != nil { terminateBlockedWorker() }
-      }
+            guard active != nil else { return }
+            switch result {
+            case let .success(ticket): finish(.success, ticket: ticket)
+            case let .failure(error):
+                let failure = error as? KerberosFailure ?? KerberosFailure(.authenticationFailed)
+                finish(failure.status, code: failure.code)
+            }
+        }
     }
 
-    if gate != nil && nativeWork == nil {
-      Self.kerberosBusy = false
-      gate = nil
+    public func disconnect() {
+        connected = false
+        stop(.disconnected)
+        deadline?.cancel()
+        deadline = nil
+        active = nil
+        interaction = ""
+        used.removeAll()
+        keys.removeAll()
     }
-    finish(status)
-  }
 
-  private func prompt(_ stage: String, choices: [String] = []) {
-    self.stage = stage
-    interaction = UUID().uuidString
-    event("interaction", value: stage, choices: choices)
-  }
+    private func stop(_ status: Status) {
+        // Once publication begins, cancellation cannot turn a committed ticket into a cancelled result.
+        if let gate, !gate.cancel() {
+            return
+        }
+        passkeyInteraction?.cancel()
+        if let gate, nativeWork != nil {
+            Task { [self] in
+                try? await Task.sleep(for: .milliseconds(750))
+                if self.gate === gate, nativeWork != nil {
+                    terminateBlockedWorker()
+                }
+            }
+        }
 
-  private func event(_ kind: String, value: String, ticket: TicketMetadata? = nil, code: Int32 = 0,
-                     choices: [String] = []) {
-    guard connected, let active else { return }
-    sequence += 1
-    emit(
-      Message(
-        kind, operation: active.operation, interaction: kind == "interaction" ? interaction : "",
-        value: value, sequence: sequence,
-        remainingMilliseconds: kind == "interaction"
-          ? max(
-            0,
-            min(
-              30_000,
-              Int(ContinuousClock.now.duration(to: expires) / .milliseconds(1)))) : 0,
-        ticket: ticket, errorCode: code, choices: choices))
-  }
+        if gate != nil, nativeWork == nil {
+            Self.kerberosBusy = false
+            gate = nil
+        }
+        finish(status)
+    }
 
-  private func finish(_ status: Status, ticket: TicketMetadata? = nil, code: Int32 = 0) {
-    guard active != nil else { return }
-    deadline?.cancel()
-    deadline = nil
-    event("terminal", value: status.rawValue, ticket: ticket, code: code)
-    active = nil
-    interaction = ""
-  }
+    private func prompt(_ stage: String, choices: [String] = []) {
+        self.stage = stage
+        interaction = UUID().uuidString
+        event("interaction", value: stage, choices: choices)
+    }
+
+    private func event(_ kind: String, value: String, ticket: TicketMetadata? = nil, code: Int32 = 0,
+                       choices: [String] = []) {
+        guard connected, let active else { return }
+        sequence += 1
+        emit(
+            Message(
+                kind, operation: active.operation, interaction: kind == "interaction" ? interaction : "",
+                value: value, sequence: sequence,
+                remainingMilliseconds: kind == "interaction"
+                    ? max(
+                        0,
+                        min(
+                            30000,
+                            Int(ContinuousClock.now.duration(to: expires) / .milliseconds(1))
+                        )
+                    ) : 0,
+                ticket: ticket, errorCode: code, choices: choices
+            )
+        )
+    }
+
+    private func finish(_ status: Status, ticket: TicketMetadata? = nil, code: Int32 = 0) {
+        guard active != nil else { return }
+        deadline?.cancel()
+        deadline = nil
+        event("terminal", value: status.rawValue, ticket: ticket, code: code)
+        active = nil
+        interaction = ""
+    }
 }

@@ -4,6 +4,8 @@ build --host_platform=//build:macos_arm64
 build --compilation_mode=opt
 # Enable modern Swift language/concurrency checking through the selected toolchain.
 build --features=swift.enable_v6
+# SwiftLint's upstream Bazel dependencies still require Swift 5 language mode.
+build:swiftlint --features=-swift.enable_v6
 # Select full Xcode without changing the machine-wide xcode-select setting.
 # build --repo_env=DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 # Let Bazel derive action/test DEVELOPER_DIR and SDKROOT from discovered Xcode.

@@ -1,0 +1,5 @@
+disabled_rules:
+  - inclusive_language
+  - cyclomatic_complexity
+  - statement_position
+  - function_body_length

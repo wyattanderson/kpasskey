@@ -2,232 +2,259 @@ import Foundation
 import KPasskeyContract
 
 public struct ClientFailure: Error, Sendable {
-  public let status: Status
-  public init(status: Status) { self.status = status }
+    public let status: Status
+    public init(status: Status) {
+        self.status = status
+    }
 }
 
 private final class EventSink: NSObject, ClientProtocol, Sendable {
-  let deliver: @Sendable (Message) -> Void
-  init(deliver: @escaping @Sendable (Message) -> Void) { self.deliver = deliver }
-  func receive(_ event: Message) { deliver(event) }
+    let deliver: @Sendable (Message) -> Void
+    init(deliver: @escaping @Sendable (Message) -> Void) {
+        self.deliver = deliver
+    }
+
+    func receive(_ event: Message) {
+        deliver(event)
+    }
 }
 
 /// The UI and console use this same main-actor adapter. Nothing reconnects or retries implicitly.
 @MainActor
 public final class WorkerClient {
-  public var onEvent: @MainActor (Message) -> Void = { _ in }
-  public private(set) var workerPID: Int32 = 0
-  private var connection: NSXPCConnection?
-  private var generation = UUID()
-  private var ready = false
-  public var isConnected: Bool { ready }
-  private var pending: [UUID: CheckedContinuation<Message, any Error>] = [:]
-  private var operations: [String: (sequence: Int, mode: String?)] = [:]
-  private var deadlines: [String: Task<Void, Never>] = [:]
-
-  public init() {}
-
-  public func connect() async throws {
-    disconnect()
-    let token = UUID()
-    generation = token
-    let identifier = Bundle.main.bundleIdentifier == applicationIdentifier
-      ? applicationWorkerIdentifier : workerIdentifier
-    let connection = NSXPCConnection(serviceName: identifier)
-    let service = Bundle.main.bundleURL.appendingPathComponent("Contents/XPCServices/Worker.xpc")
-    connection.setCodeSigningRequirement(
-      try PeerPolicy.requirement(peer: service, identifier: identifier))
-    connection.remoteObjectInterface = workerInterface()
-    connection.exportedInterface = clientInterface()
-    connection.exportedObject = EventSink { [weak self] event in
-      Task { @MainActor in
-        guard let self, self.generation == token else { return }
-        self.receive(event)
-      }
-    }
-    let lost: @Sendable () -> Void = { [weak self] in
-      Task { @MainActor in
-        guard let self, self.generation == token else { return }
-        self.close(.workerLost)
-      }
-    }
-    connection.interruptionHandler = lost
-    connection.invalidationHandler = lost
-    self.connection = connection
-    connection.activate()
-
-    // launchd throttles a service restart after a crash; negotiation allows that delay.
-    let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
-    guard generation == token else { throw ClientFailure(status: .disconnected) }
-    guard reply.kind == "negotiated", reply.version == 4, reply.value == "fake,password,passkey,devices",
-      reply.sequence > 0, reply.sequence <= Int(Int32.max), reply.sequence != Int(getpid())
-    else {
-      close(.protocolViolation)
-      throw ClientFailure(status: .protocolViolation)
-    }
-    workerPID = Int32(reply.sequence)
-    ready = true
-  }
-
-  @discardableResult
-  public func start(_ snapshot: Snapshot, operation: String = UUID().uuidString) async throws
-    -> Message
-  {
-    guard ready, UUID(uuidString: operation)?.uuidString == operation, snapshot.valid else {
-      throw ClientFailure(status: .protocolViolation)
-    }
-    let tracking = operations[operation] == nil
-    let token = generation
-    if tracking {
-      operations[operation] = (0, snapshot.configuration?.mode.rawValue)
-      armDeadline(operation, milliseconds: snapshot.timeoutMilliseconds + 1_000)
+    public var onEvent: @MainActor (Message) -> Void = { _ in }
+    public private(set) var workerPID: Int32 = 0
+    private var connection: NSXPCConnection?
+    private var generation = UUID()
+    private var ready = false
+    public var isConnected: Bool {
+        ready
     }
 
-    do {
-      let reply = try await exchange(Message("start", operation: operation, snapshot: snapshot))
-      if generation == token && reply.value != Status.ok.rawValue && tracking { forget(operation) }
-      return reply
-    } catch {
-      if generation == token && tracking { forget(operation) }
-      throw error
-    }
-  }
+    private var pending: [UUID: CheckedContinuation<Message, any Error>] = [:]
+    private var operations: [String: (sequence: Int, mode: String?)] = [:]
+    private var deadlines: [String: Task<Void, Never>] = [:]
 
-  public func respond(to event: Message, value: String) async throws -> Message {
-    try await exchange(
-      Message(
-        "respond", operation: event.operation,
-        interaction: event.interaction, value: value))
-  }
+    public init() {}
 
-  public func respond(to event: Message, password: Data) async throws -> Message {
-    try await exchange(Message("respond", operation: event.operation,
-      interaction: event.interaction, secret: password))
-  }
-
-  public func cancel(_ operation: String) async throws -> Message {
-    if operations[operation] != nil { armDeadline(operation, milliseconds: 1_000) }
-    return try await exchange(Message("cancel", operation: operation))
-  }
-
-  public func devices() async throws -> [SecurityKey] {
-    guard ready else { throw ClientFailure(status: .disconnected) }
-    let reply = try await exchange(Message("devices"))
-    guard reply.kind == "devices" else {
-      throw ClientFailure(status: Status(rawValue: reply.value) ?? .protocolViolation)
-    }
-    return reply.devices
-  }
-
-  /// Also used by the harness's malformed-wire checks. Normal callers use the typed methods above.
-  public func exchange(_ message: Message, timeout: Duration = .seconds(5)) async throws -> Message
-  {
-    guard let connection else { throw ClientFailure(status: .disconnected) }
-    let id = UUID()
-    let token = generation
-    let watchdog = Task { [weak self] in
-      do { try await Task.sleep(for: timeout) } catch { return }
-      guard let self, self.generation == token, self.pending[id] != nil else { return }
-      self.close(.workerLost)
-    }
-    defer { watchdog.cancel() }
-    return try await withCheckedThrowingContinuation { continuation in
-      pending[id] = continuation
-      guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] _ in
-        Task { @MainActor in
-          guard let self, self.generation == token else { return }
-          self.close(.workerLost)
+    public func connect() async throws {
+        disconnect()
+        let token = UUID()
+        generation = token
+        let identifier = Bundle.main.bundleIdentifier == applicationIdentifier
+            ? applicationWorkerIdentifier : workerIdentifier
+        let connection = NSXPCConnection(serviceName: identifier)
+        let service = Bundle.main.bundleURL.appendingPathComponent("Contents/XPCServices/Worker.xpc")
+        try connection.setCodeSigningRequirement(
+            PeerPolicy.requirement(peer: service, identifier: identifier)
+        )
+        connection.remoteObjectInterface = workerInterface()
+        connection.exportedInterface = clientInterface()
+        connection.exportedObject = EventSink { [weak self] event in
+            Task { @MainActor in
+                guard let self, self.generation == token else { return }
+                self.receive(event)
+            }
         }
-      }) as? WorkerProtocol else {
-        close(.protocolViolation)
-        return
-      }
+        let lost: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.generation == token else { return }
+                self.close(.workerLost)
+            }
+        }
+        connection.interruptionHandler = lost
+        connection.invalidationHandler = lost
+        self.connection = connection
+        connection.activate()
 
-      proxy.exchange(message) { [weak self] reply in
-        Task { @MainActor in
-          guard let self, self.generation == token else { return }
-          guard reply.bounded, reply.version == 4, reply.secret == nil, reply.ticket == nil, reply.choices.isEmpty,
-            reply.errorCode == 0,
-            reply.operation == message.operation, reply.interaction.isEmpty,
-            reply.snapshot == nil, reply.remainingMilliseconds == 0,
-            (reply.kind == "devices" && message.kind == "devices" && reply.sequence == 0 && reply.value.isEmpty)
-              || (reply.kind == "negotiated" && message.kind == "negotiate" && reply.devices.isEmpty)
-              || (reply.kind == "ack" && reply.sequence == 0 && reply.devices.isEmpty
-                && Status(rawValue: reply.value) != nil)
-          else {
-            self.close(.protocolViolation)
+        // launchd throttles a service restart after a crash; negotiation allows that delay.
+        let reply = try await exchange(Message("negotiate"), timeout: .seconds(15))
+        guard generation == token else { throw ClientFailure(status: .disconnected) }
+        guard reply.kind == "negotiated", reply.version == 4, reply.value == "fake,password,passkey,devices",
+              reply.sequence > 0, reply.sequence <= Int(Int32.max), reply.sequence != Int(getpid())
+        else {
+            close(.protocolViolation)
+            throw ClientFailure(status: .protocolViolation)
+        }
+        workerPID = Int32(reply.sequence)
+        ready = true
+    }
+
+    @discardableResult
+    public func start(_ snapshot: Snapshot, operation: String = UUID().uuidString) async throws
+        -> Message {
+        guard ready, UUID(uuidString: operation)?.uuidString == operation, snapshot.valid else {
+            throw ClientFailure(status: .protocolViolation)
+        }
+        let tracking = operations[operation] == nil
+        let token = generation
+        if tracking {
+            operations[operation] = (0, snapshot.configuration?.mode.rawValue)
+            armDeadline(operation, milliseconds: snapshot.timeoutMilliseconds + 1000)
+        }
+
+        do {
+            let reply = try await exchange(Message("start", operation: operation, snapshot: snapshot))
+            if generation == token, reply.value != Status.success.rawValue, tracking {
+                forget(operation)
+            }
+            return reply
+        } catch {
+            if generation == token, tracking {
+                forget(operation)
+            }
+            throw error
+        }
+    }
+
+    public func respond(to event: Message, value: String) async throws -> Message {
+        try await exchange(
+            Message(
+                "respond", operation: event.operation,
+                interaction: event.interaction, value: value
+            )
+        )
+    }
+
+    public func respond(to event: Message, password: Data) async throws -> Message {
+        try await exchange(Message("respond", operation: event.operation,
+                                   interaction: event.interaction, secret: password))
+    }
+
+    public func cancel(_ operation: String) async throws -> Message {
+        if operations[operation] != nil {
+            armDeadline(operation, milliseconds: 1000)
+        }
+        return try await exchange(Message("cancel", operation: operation))
+    }
+
+    public func devices() async throws -> [SecurityKey] {
+        guard ready else { throw ClientFailure(status: .disconnected) }
+        let reply = try await exchange(Message("devices"))
+        guard reply.kind == "devices" else {
+            throw ClientFailure(status: Status(rawValue: reply.value) ?? .protocolViolation)
+        }
+        return reply.devices
+    }
+
+    /// Also used by the harness's malformed-wire checks. Normal callers use the typed methods above.
+    public func exchange(_ message: Message, timeout: Duration = .seconds(5)) async throws -> Message {
+        guard let connection else { throw ClientFailure(status: .disconnected) }
+        let id = UUID()
+        let token = generation
+        let watchdog = Task { [weak self] in
+            do { try await Task.sleep(for: timeout) } catch { return }
+            guard let self, generation == token, pending[id] != nil else { return }
+            close(.workerLost)
+        }
+        defer { watchdog.cancel() }
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[id] = continuation
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.generation == token else { return }
+                    self.close(.workerLost)
+                }
+            }) as? WorkerProtocol else {
+                close(.protocolViolation)
+                return
+            }
+
+            proxy.exchange(message) { [weak self] reply in
+                Task { @MainActor in
+                    guard let self, self.generation == token else { return }
+                    guard reply.bounded, reply.version == 4, reply.secret == nil, reply.ticket == nil,
+                          reply.choices.isEmpty,
+                          reply.errorCode == 0,
+                          reply.operation == message.operation, reply.interaction.isEmpty,
+                          reply.snapshot == nil, reply.remainingMilliseconds == 0,
+                          (reply.kind == "devices" && message.kind == "devices" && reply.sequence == 0 && reply.value
+                              .isEmpty)
+                          || (reply.kind == "negotiated" && message.kind == "negotiate" && reply.devices.isEmpty)
+                          || (reply.kind == "ack" && reply.sequence == 0 && reply.devices.isEmpty
+                              && Status(rawValue: reply.value) != nil)
+                    else {
+                        self.close(.protocolViolation)
+                        return
+                    }
+                    self.pending.removeValue(forKey: id)?.resume(returning: reply)
+                }
+            }
+        }
+    }
+
+    public func disconnect() {
+        close(.disconnected)
+    }
+
+    private func armDeadline(_ operation: String, milliseconds: Int) {
+        deadlines[operation]?.cancel()
+        deadlines[operation] = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(milliseconds)) } catch { return }
+            guard let self, operations[operation] != nil else { return }
+            close(.workerLost)
+        }
+    }
+
+    private func receive(_ event: Message) {
+        guard let operation = operations[event.operation] else { return }
+        let interactions = operation.mode == "passkey" ? ["selectDevice", "pin"]
+            : operation.mode == "password" ? ["password"] : ["selectKey", "touch"]
+        guard event.bounded, event.version == 4, event.devices.isEmpty, event.snapshot == nil, event.secret == nil,
+              event.kind == "terminal" || (event.ticket == nil && event.errorCode == 0),
+              event.ticket == nil || (event.kind == "terminal" && event.value == "ok"),
+              event.kind != "terminal" || event.value != "ok" || event.ticket?.mode == operation.mode,
+              event.value == "selectDevice" && event.kind == "interaction"
+              ? !event.choices.isEmpty : event.choices.isEmpty,
+              event.sequence == operation.sequence + 1,
+              (event.kind == "progress" && ["started", "authenticating", "acquiringArmor", "touchKey", "verifyOnDevice"]
+                  .contains(event.value) && event.interaction.isEmpty
+                  && event.remainingMilliseconds == 0)
+              || (event.kind == "interaction" && interactions.contains(event.value)
+                  && UUID(uuidString: event.interaction)?.uuidString == event.interaction)
+              || (event.kind == "terminal" && Status(rawValue: event.value) != nil
+                  && event.interaction.isEmpty
+                  && event.remainingMilliseconds == 0)
+        else {
+            close(.protocolViolation)
             return
-          }
-          self.pending.removeValue(forKey: id)?.resume(returning: reply)
         }
-      }
-    }
-  }
-
-  public func disconnect() { close(.disconnected) }
-
-  private func armDeadline(_ operation: String, milliseconds: Int) {
-    deadlines[operation]?.cancel()
-    deadlines[operation] = Task { [weak self] in
-      do { try await Task.sleep(for: .milliseconds(milliseconds)) } catch { return }
-      guard let self, self.operations[operation] != nil else { return }
-      self.close(.workerLost)
-    }
-  }
-
-  private func receive(_ event: Message) {
-    guard let operation = operations[event.operation] else { return }
-    let interactions = operation.mode == "passkey" ? ["selectDevice", "pin"]
-      : operation.mode == "password" ? ["password"] : ["selectKey", "touch"]
-    guard event.bounded, event.version == 4, event.devices.isEmpty, event.snapshot == nil, event.secret == nil,
-      (event.kind == "terminal" || (event.ticket == nil && event.errorCode == 0)),
-      (event.ticket == nil || (event.kind == "terminal" && event.value == "ok")),
-      (event.kind != "terminal" || event.value != "ok" || event.ticket?.mode == operation.mode),
-      (event.value == "selectDevice" && event.kind == "interaction"
-        ? !event.choices.isEmpty : event.choices.isEmpty),
-      event.sequence == operation.sequence + 1,
-      (event.kind == "progress" && ["started", "authenticating", "acquiringArmor", "touchKey", "verifyOnDevice"].contains(event.value) && event.interaction.isEmpty
-        && event.remainingMilliseconds == 0)
-        || (event.kind == "interaction" && interactions.contains(event.value)
-          && UUID(uuidString: event.interaction)?.uuidString == event.interaction)
-        || (event.kind == "terminal" && Status(rawValue: event.value) != nil
-          && event.interaction.isEmpty
-          && event.remainingMilliseconds == 0)
-    else {
-      close(.protocolViolation)
-      return
-    }
-    operations[event.operation] = (event.sequence, operation.mode)
-    if event.kind == "terminal" { forget(event.operation) }
-    onEvent(event)
-  }
-
-  private func forget(_ operation: String) {
-    operations.removeValue(forKey: operation)
-    deadlines.removeValue(forKey: operation)?.cancel()
-  }
-
-  private func close(_ status: Status) {
-    generation = UUID()
-    ready = false
-    workerPID = 0
-    let old = connection
-    connection = nil
-    old?.invalidate()
-
-    let replies = pending
-    pending.removeAll()
-    for continuation in replies.values {
-      continuation.resume(throwing: ClientFailure(status: status))
+        operations[event.operation] = (event.sequence, operation.mode)
+        if event.kind == "terminal" {
+            forget(event.operation)
+        }
+        onEvent(event)
     }
 
-    let active = operations
-    operations.removeAll()
-    for task in deadlines.values { task.cancel() }
-    deadlines.removeAll()
-    for (operation, state) in active {
-      onEvent(
-        Message("terminal", operation: operation, value: status.rawValue, sequence: state.sequence + 1))
+    private func forget(_ operation: String) {
+        operations.removeValue(forKey: operation)
+        deadlines.removeValue(forKey: operation)?.cancel()
     }
-  }
+
+    private func close(_ status: Status) {
+        generation = UUID()
+        ready = false
+        workerPID = 0
+        let old = connection
+        connection = nil
+        old?.invalidate()
+
+        let replies = pending
+        pending.removeAll()
+        for continuation in replies.values {
+            continuation.resume(throwing: ClientFailure(status: status))
+        }
+
+        let active = operations
+        operations.removeAll()
+        for task in deadlines.values {
+            task.cancel()
+        }
+        deadlines.removeAll()
+        for (operation, state) in active {
+            onEvent(
+                Message("terminal", operation: operation, value: status.rawValue, sequence: state.sequence + 1)
+            )
+        }
+    }
 }

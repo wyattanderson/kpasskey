@@ -108,4 +108,9 @@ http_archive(
     url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-macos-universal.tar.gz",
 )
 
-bazel_dep(name = "swiftlint", version = "0.52.4", repo_name = "SwiftLint")
+bazel_dep(name = "swiftlint", version = "0.65.1", repo_name = "SwiftLint")
+archive_override(
+    module_name = "swiftlint",
+    sha256 = "ba76492a67197543419d8a20c0f1d371260e76609acf0a411f5a8af8b15d19ab",
+    urls = ["https://github.com/realm/SwiftLint/releases/download/0.65.1/bazel.tar.gz"],
+)

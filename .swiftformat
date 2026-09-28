@@ -1,0 +1,5 @@
+--allman false
+--maxwidth 120
+--swiftversion 6.0
+--trailing-commas never
+--disable wrapMultilineStatementBraces
