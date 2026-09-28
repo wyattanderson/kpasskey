@@ -46,6 +46,37 @@ http_archive(
     url = "https://github.com/caarlos0/svu/releases/download/v3.4.1/svu_3.4.1_darwin_all.tar.gz",
 )
 
+# Pinned upstream artifact bundle with native macOS and Linux executables.
+http_archive(
+    name = "swiftformat",
+    build_file_content = """
+sh_binary(
+    name = "swiftformat",
+    srcs = select({
+        "@platforms//os:linux": ["swiftformat.artifactbundle/swiftformat-0.63.0-linux-gnu/bin/swiftformat_linux"],
+        "@platforms//os:macos": ["swiftformat.artifactbundle/swiftformat-0.63.0-macos/bin/swiftformat"],
+    }),
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "d3c350a6655c0f687e2c23aac3e777b35345313a6428bb36b915fe7d9840ec78",
+    url = "https://github.com/nicklockwood/SwiftFormat/releases/download/0.63.0/swiftformat.artifactbundle.zip",
+)
+
+# Static Linux release binary for the Ubuntu lint workflow.
+http_archive(
+    name = "swiftlint_linux",
+    build_file_content = """
+sh_binary(
+    name = "swiftlint",
+    srcs = ["swiftlint-static"],
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "caeed6f4a679c35539ffaf124f6c4ab4a8416917f7d8796279dc52b74026059d",
+    url = "https://github.com/realm/SwiftLint/releases/download/0.65.1/swiftlint_linux_amd64.zip",
+)
+
 http_archive(
     name = "pinata",
     build_file_content = 'exports_files(["pinata"])',
