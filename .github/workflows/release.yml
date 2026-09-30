@@ -25,23 +25,24 @@ jobs:
           persist-credentials: false
       - uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
         with:
+          bazelisk-version: 1.x
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
       - name: Test release policy
-        run: bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //...
+        run: bazel test --lockfile_mode=error --embed_label=v1.2.3 //...
       - name: Test release disk image
-        run: bazelisk test --lockfile_mode=error --embed_label=v1.2.3 //release:archive_tests
+        run: bazel test --lockfile_mode=error --embed_label=v1.2.3 //release:archive_tests
       - name: Test development XPC
-        run: bazelisk test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
+        run: bazel test --lockfile_mode=error --config=development //tests:native_app //tests:xpc_integration
       - name: Build stamped release archive
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          version=$(bazelisk run --lockfile_mode=error //:version)
+          version=$(bazel run --lockfile_mode=error //:version)
           if [ "$REF_TYPE" = tag ]; then version="$REF_NAME"; fi
-          bazelisk build --lockfile_mode=error --embed_label="$version" //:release
+          bazel build --lockfile_mode=error --embed_label="$version" //:release
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-release
@@ -62,6 +63,7 @@ jobs:
           persist-credentials: false
       - uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
         with:
+          bazelisk-version: 1.x
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
@@ -80,9 +82,9 @@ jobs:
         run: |
           mode=unsigned
           if [ "$SIGNING_ENABLED" = true ]; then mode=signed; fi
-          bazelisk build --lockfile_mode=error --embed_label="$RELEASE_TAG" //app:KPasskey
-          archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$RELEASE_TAG" --output=files //app:KPasskey)
-          bazelisk run --lockfile_mode=error //release:prepare -- "$mode" "$archive" dist "$RELEASE_TAG"
+          bazel build --lockfile_mode=error --embed_label="$RELEASE_TAG" //app:KPasskey
+          archive=$(bazel cquery --lockfile_mode=error --embed_label="$RELEASE_TAG" --output=files //app:KPasskey)
+          bazel run --lockfile_mode=error //release:prepare -- "$mode" "$archive" dist "$RELEASE_TAG"
       - name: Publish release (unsigned builds remain drafts)
         env:
           GH_TOKEN: ${{ github.token }}

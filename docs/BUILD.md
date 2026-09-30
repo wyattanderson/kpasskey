@@ -1,13 +1,22 @@
 # Building and releasing
 
-Use an Apple Silicon Mac, full Xcode with its first-launch setup completed, Bazelisk, and a complete Git checkout with tags. The selected developer directory should point to full Xcode, not Command Line Tools. Build and dependency pins live in [.bazelversion](../.bazelversion) and [MODULE.bazel](../MODULE.bazel); Bazel handles the dependencies.
+Use an Apple Silicon Mac, full Xcode with its first-launch setup completed, `bazel` on your `PATH`, and a complete Git checkout with tags. The selected developer directory should point to full Xcode, not Command Line Tools. Build and dependency pins live in [.bazelversion](../.bazelversion) and [MODULE.bazel](../MODULE.bazel); Bazel handles the dependencies.
+
+For local setup with Homebrew:
+
+```sh
+brew install bazelisk
+bazel --version
+```
+
+This installs Bazelisk as the `bazel` launcher, which downloads and runs the version selected by `.bazelversion`. Run the version check from the repository root. If you install Bazel another way, ensure `bazel` is on your `PATH` and matches `.bazelversion`. GitHub Actions uses `setup-bazel` to install the launcher as `bazel`; its `bazelisk-*` inputs configure installation and caching.
 
 ## Build for your own Mac
 
 From the repository root:
 
 ```sh
-bazelisk build --config=development //app:KPasskey
+bazel build --config=development //app:KPasskey
 kpasskey_build=$(mktemp -d)
 ditto -x -k bazel-bin/app/KPasskey.zip "$kpasskey_build"
 open "$kpasskey_build/KPasskey.app"
@@ -18,16 +27,16 @@ This produces an ad-hoc signed app that can authenticate locally without an Appl
 Run both policies' tests when changing the app:
 
 ```sh
-bazelisk test --lockfile_mode=error //...
-bazelisk test --lockfile_mode=error --config=development //...
+bazel test --lockfile_mode=error //...
+bazel test --lockfile_mode=error --config=development //...
 ```
 
 For a fresh build without previous compiled outputs or user Bazel settings:
 
 ```sh
 kpasskey_output_base=$(mktemp -d)
-bazelisk --nosystem_rc --nohome_rc --output_base="$kpasskey_output_base" fetch --lockfile_mode=error //...
-bazelisk --nosystem_rc --nohome_rc --output_base="$kpasskey_output_base" test --nofetch --lockfile_mode=error //...
+bazel --nosystem_rc --nohome_rc --output_base="$kpasskey_output_base" fetch --lockfile_mode=error //...
+bazel --nosystem_rc --nohome_rc --output_base="$kpasskey_output_base" test --nofetch --lockfile_mode=error //...
 ```
 
 ## Make a release
@@ -36,17 +45,17 @@ Start with a clean checkout and complete history, including remote tags:
 
 ```sh
 git fetch origin --tags
-bazelisk run //:bump
+bazel run //:bump
 ```
 
-This creates an annotated local tag using Conventional Commits: `fix:` bumps patch, `feat:` bumps minor, and a breaking change bumps major. For an explicit increment, use `bazelisk run //:bump -- patch` (or `minor` or `major`). Tags use `vMAJOR.MINOR.PATCH`; there is no version file to edit and prerelease suffixes aren't supported.
+This creates an annotated local tag using Conventional Commits: `fix:` bumps patch, `feat:` bumps minor, and a breaking change bumps major. For an explicit increment, use `bazel run //:bump -- patch` (or `minor` or `major`). Tags use `vMAJOR.MINOR.PATCH`; there is no version file to edit and prerelease suffixes aren't supported.
 
 To check the stamped disk image locally before pushing:
 
 ```sh
-version=$(bazelisk run //:version)
-bazelisk build --lockfile_mode=error --embed_label="$version" //:release
-bazelisk test --lockfile_mode=error --embed_label="$version" //release:archive_tests
+version=$(bazel run //:version)
+bazel build --lockfile_mode=error --embed_label="$version" //:release
+bazel test --lockfile_mode=error --embed_label="$version" //release:archive_tests
 ```
 
 The DMG and checksum are under `bazel-bin/release/`. This is an unsigned packaging check: the release policy is still enabled, so this app can't authenticate until it has been signed with a trusted identity. Disk image creation uses Finder and may request Automation permission.
@@ -80,10 +89,10 @@ For rotation, replace the affected secrets and validate a locally signed build b
 Export the same six `APPLE_*` values above into your terminal environment. For the certificate, use `export APPLE_CERTIFICATE_BASE64="$(base64 -i /path/to/DeveloperID.p12)"`; enter passwords privately, without saving them in shell history. Then run:
 
 ```sh
-version=$(bazelisk run //:version)
-bazelisk build --lockfile_mode=error --embed_label="$version" //app:KPasskey
-archive=$(bazelisk cquery --lockfile_mode=error --embed_label="$version" --output=files //app:KPasskey)
-bazelisk run --lockfile_mode=error //release:prepare -- signed "$archive" dist "$version"
+version=$(bazel run //:version)
+bazel build --lockfile_mode=error --embed_label="$version" //app:KPasskey
+archive=$(bazel cquery --lockfile_mode=error --embed_label="$version" --output=files //app:KPasskey)
+bazel run --lockfile_mode=error //release:prepare -- signed "$archive" dist "$version"
 ```
 
 This uses a temporary keychain, signs the app and nested code, checks the signed XPC connection, waits for notarization, and staples Apple's ticket before creating the DMG and checksum in `dist/`. It doesn't publish to GitHub. Signing credentials stay outside Bazel's cacheable build actions, and signing or notarization failure stops the process.
