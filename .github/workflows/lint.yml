@@ -20,6 +20,6 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
       - name: Run SwiftLint
-        run: bazelisk run --lockfile_mode=error @swiftlint_linux//:swiftlint -- lint --strict "$GITHUB_WORKSPACE"
+        run: bazelisk run --config=lint --lockfile_mode=error @swiftlint_linux//:swiftlint -- lint --strict "$GITHUB_WORKSPACE"
       - name: Check SwiftFormat
-        run: bazelisk run --lockfile_mode=error @swiftformat//:swiftformat -- --lint "$GITHUB_WORKSPACE" --reporter github-actions-log
+        run: bazelisk run --config=lint --lockfile_mode=error @swiftformat//:swiftformat -- --lint "$GITHUB_WORKSPACE" --reporter github-actions-log

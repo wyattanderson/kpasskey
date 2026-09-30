@@ -1,6 +1,7 @@
 common --enable_bzlmod
 build --platforms=//build:macos_arm64
-build --host_platform=//build:macos_arm64
+# Prebuilt lint tools must run on the current machine, including Linux CI.
+build:lint --platforms=@platforms//host:host
 build --compilation_mode=opt
 # Enable modern Swift language/concurrency checking through the selected toolchain.
 build --features=swift.enable_v6
